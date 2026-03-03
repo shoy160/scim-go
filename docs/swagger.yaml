@@ -1,0 +1,778 @@
+basePath: /scim/v2
+definitions:
+  model.Email:
+    properties:
+      primary:
+        type: boolean
+      type:
+        description: work/home/other
+        type: string
+      value:
+        type: string
+    type: object
+  model.ErrorResponse:
+    properties:
+      detail:
+        type: string
+      schemas:
+        type: string
+      scimType:
+        type: string
+      status:
+        type: integer
+    type: object
+  model.Group:
+    properties:
+      displayName:
+        type: string
+      externalId:
+        type: string
+      id:
+        type: string
+      members:
+        description: 组成员（多值属性，关联用户ID）
+        items:
+          $ref: '#/definitions/model.Member'
+        type: array
+      schemas:
+        items:
+          type: string
+        type: array
+    type: object
+  model.ListResponse:
+    properties:
+      Resources: {}
+      itemsPerPage:
+        type: integer
+      schemas:
+        items:
+          type: string
+        type: array
+      startIndex:
+        type: integer
+      totalResults:
+        type: integer
+    type: object
+  model.Member:
+    properties:
+      display:
+        description: 用户名
+        type: string
+      value:
+        description: 用户ID
+        type: string
+    type: object
+  model.PatchOperation:
+    properties:
+      op:
+        description: 操作类型
+        enum:
+        - add
+        - remove
+        - replace
+        type: string
+      path:
+        description: 属性路径：如name.givenName/emails[0].value
+        type: string
+      value:
+        description: 操作值
+    required:
+    - op
+    type: object
+  model.PatchRequest:
+    properties:
+      Operations:
+        items:
+          $ref: '#/definitions/model.PatchOperation'
+        type: array
+      schemas:
+        items:
+          type: string
+        type: array
+    required:
+    - Operations
+    - schemas
+    type: object
+  model.Role:
+    properties:
+      display:
+        type: string
+      primary:
+        type: boolean
+      type:
+        type: string
+      value:
+        description: 角色值
+        type: string
+    type: object
+  model.User:
+    properties:
+      active:
+        type: boolean
+      displayName:
+        type: string
+      emails:
+        description: 邮箱（多值属性，关联表）
+        items:
+          $ref: '#/definitions/model.Email'
+        type: array
+      externalId:
+        type: string
+      groups:
+        description: 用户所属的组（非数据库字段，动态填充）
+        items:
+          $ref: '#/definitions/model.UserGroup'
+        type: array
+      id:
+        type: string
+      name:
+        description: 姓名信息（嵌套）
+        properties:
+          familyName:
+            type: string
+          givenName:
+            type: string
+          middleName:
+            type: string
+        type: object
+      nickName:
+        type: string
+      profileUrl:
+        type: string
+      roles:
+        description: 角色（SCIM标准）
+        items:
+          $ref: '#/definitions/model.Role'
+        type: array
+      schemas:
+        items:
+          type: string
+        type: array
+      userName:
+        type: string
+    type: object
+  model.UserGroup:
+    properties:
+      display:
+        description: 组显示名称
+        type: string
+      value:
+        description: 组ID
+        type: string
+    type: object
+host: localhost:8000
+info:
+  contact:
+    email: support@example.com
+    name: API Support
+    url: https://example.com/support
+  description: SCIM (System for Cross-domain Identity Management) 2.0 实现，提供用户和组管理功能
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: https://example.com/terms
+  title: SCIM 2.0 API
+  version: 1.0.0
+paths:
+  /Groups:
+    get:
+      consumes:
+      - application/json
+      description: 获取组列表，支持分页、过滤和属性选择
+      parameters:
+      - default: 1
+        description: 起始索引
+        in: query
+        name: startIndex
+        type: integer
+      - default: 20
+        description: 每页数量
+        in: query
+        name: count
+        type: integer
+      - description: 过滤条件
+        in: query
+        name: filter
+        type: string
+      - description: 要返回的属性列表，逗号分隔
+        in: query
+        name: attributes
+        type: string
+      - description: 要排除的属性列表，逗号分隔
+        in: query
+        name: excludedAttributes
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 组列表
+          schema:
+            $ref: '#/definitions/model.ListResponse'
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 列出所有组
+      tags:
+      - Groups
+    post:
+      consumes:
+      - application/json
+      description: 创建新组，可以包含成员
+      parameters:
+      - description: 组信息
+        in: body
+        name: group
+        required: true
+        schema:
+          $ref: '#/definitions/model.Group'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: 创建成功
+          schema:
+            $ref: '#/definitions/model.Group'
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "409":
+          description: 组已存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 创建组
+      tags:
+      - Groups
+  /Groups/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: 根据组ID删除组
+      parameters:
+      - description: 组ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 删除成功
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 组不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 删除组
+      tags:
+      - Groups
+    get:
+      consumes:
+      - application/json
+      description: 根据组ID获取组详细信息
+      parameters:
+      - description: 组ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 要返回的属性列表，逗号分隔
+        in: query
+        name: attributes
+        type: string
+      - description: 要排除的属性列表，逗号分隔
+        in: query
+        name: excludedAttributes
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 组信息
+          schema:
+            $ref: '#/definitions/model.Group'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 组不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 获取单个组
+      tags:
+      - Groups
+    patch:
+      consumes:
+      - application/json
+      description: 使用补丁操作更新组属性
+      parameters:
+      - description: 组ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 补丁操作
+        in: body
+        name: patch
+        required: true
+        schema:
+          $ref: '#/definitions/model.PatchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            $ref: '#/definitions/model.Group'
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 组不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 补丁更新组
+      tags:
+      - Groups
+    put:
+      consumes:
+      - application/json
+      description: 全量替换组信息
+      parameters:
+      - description: 组ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 组信息
+        in: body
+        name: group
+        required: true
+        schema:
+          $ref: '#/definitions/model.Group'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            $ref: '#/definitions/model.Group'
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 组不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 全量更新组
+      tags:
+      - Groups
+  /Groups/{id}/members:
+    post:
+      consumes:
+      - application/json
+      description: 将用户添加到指定组
+      parameters:
+      - description: 组ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 用户ID
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 添加成功，返回更新后的组信息
+          schema:
+            $ref: '#/definitions/model.Group'
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 组或用户不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "409":
+          description: 用户已在组中
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 添加用户到组
+      tags:
+      - Groups
+  /Groups/{id}/members/{userId}:
+    delete:
+      consumes:
+      - application/json
+      description: 将用户从指定组中移除
+      parameters:
+      - description: 组ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 用户ID
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 移除成功
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 组或用户不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 从组中移除用户
+      tags:
+      - Groups
+  /Users:
+    get:
+      consumes:
+      - application/json
+      description: 获取用户列表，支持分页、过滤和属性选择
+      parameters:
+      - default: 1
+        description: 起始索引
+        in: query
+        name: startIndex
+        type: integer
+      - default: 20
+        description: 每页数量
+        in: query
+        name: count
+        type: integer
+      - description: 过滤条件
+        in: query
+        name: filter
+        type: string
+      - description: 要返回的属性列表，逗号分隔
+        in: query
+        name: attributes
+        type: string
+      - description: 要排除的属性列表，逗号分隔
+        in: query
+        name: excludedAttributes
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 用户列表
+          schema:
+            $ref: '#/definitions/model.ListResponse'
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 列出所有用户
+      tags:
+      - Users
+    post:
+      consumes:
+      - application/json
+      description: 创建新用户，需要提供用户名和姓名信息
+      parameters:
+      - description: 用户信息
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/model.User'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: 创建成功
+          schema:
+            $ref: '#/definitions/model.User'
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "409":
+          description: 用户已存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 创建用户
+      tags:
+      - Users
+  /Users/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: 根据用户ID删除用户
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 删除成功
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 删除用户
+      tags:
+      - Users
+    get:
+      consumes:
+      - application/json
+      description: 根据用户ID获取用户详细信息
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 要返回的属性列表，逗号分隔
+        in: query
+        name: attributes
+        type: string
+      - description: 要排除的属性列表，逗号分隔
+        in: query
+        name: excludedAttributes
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 用户信息
+          schema:
+            $ref: '#/definitions/model.User'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 获取单个用户
+      tags:
+      - Users
+    patch:
+      consumes:
+      - application/json
+      description: 使用补丁操作更新用户属性
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 补丁操作
+        in: body
+        name: patch
+        required: true
+        schema:
+          $ref: '#/definitions/model.PatchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            $ref: '#/definitions/model.User'
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 补丁更新用户
+      tags:
+      - Users
+    put:
+      consumes:
+      - application/json
+      description: 全量替换用户信息
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 用户信息
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/model.User'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            $ref: '#/definitions/model.User'
+        "400":
+          description: 请求参数错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "401":
+          description: 未授权
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: 服务器内部错误
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: 全量更新用户
+      tags:
+      - Users
+securityDefinitions:
+  BearerAuth:
+    description: 请输入 "Bearer {token}" 格式的认证令牌
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

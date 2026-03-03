@@ -1,0 +1,30 @@
+# 运行模式：debug/release
+mode: release
+# 服务端口
+port: 8080
+# SCIM Bearer Token认证密钥（生产请替换为强随机字符串）
+token: "aGCIhV2JtgAezYduMpE1rK6Omy"
+# 日志级别：debug/info/warn/error
+log_level: info
+
+# 存储配置：memory/redis/mysql/postgres
+storage:
+  driver: memory
+  # redis_uri: "redis://redis:6379/0"
+  # mysql_dsn: "user:password@tcp(localhost:3306)/db_scim?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s"
+  # postgres_dsn: "host=postgres user=postgres password=postgres dbname=scim port=5432 sslmode=disable connect_timeout=5"
+
+# 分页配置（SCIM标准）
+pagination:
+  default_count: 20
+  max_count: 100
+  # 游标分页开关（RFC 9865）
+  cursor_support: true
+
+# SCIM协议配置
+scim:
+  # 支持的Schema
+  default_schema: "urn:ietf:params:scim:schemas:core:2.0:User"
+  group_schema: "urn:ietf:params:scim:schemas:core:2.0:Group"
+  error_schema: "urn:ietf:params:scim:api:messages:2.0:Error"
+  list_schema: "urn:ietf:params:scim:api:messages:2.0:ListResponse"
