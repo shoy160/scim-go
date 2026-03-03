@@ -9,9 +9,10 @@ log_level: info
 
 # 存储配置：memory/redis/mysql/postgres
 storage:
-  driver: memory
+  # driver: memory
+  driver: mysql
   # redis_uri: "redis://redis:6379/0"
-  # mysql_dsn: "user:password@tcp(localhost:3306)/db_scim?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s"
+  mysql_dsn: "root:a123456@tcp(authing.cd:13306)/db_scim?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s"
   # postgres_dsn: "host=postgres user=postgres password=postgres dbname=scim port=5432 sslmode=disable connect_timeout=5"
 
 # 分页配置（SCIM标准）

@@ -664,8 +664,11 @@ func (h *UserHandlers) validateFilter(c *gin.Context, filter string) error {
 
 // needsGroups 检查是否需要加载用户的组信息
 func (h *UserHandlers) needsGroups(q *model.ResourceQuery) bool {
-	return strings.Contains(q.Attributes, "groups") ||
-		strings.Contains(q.ExcludedAttributes, "groups")
+	needGroups := strings.Contains(q.Attributes, "groups")
+	if needGroups {
+		q.Attributes = strings.Replace(q.Attributes, "groups", "", 1)
+	}
+	return needGroups
 }
 
 // processUserList 处理用户列表并应用属性选择
@@ -683,7 +686,6 @@ func (h *UserHandlers) processUserList(users []model.User, q *model.ResourceQuer
 			}
 			users[i].Groups = groups
 		}
-
 		// 应用属性选择
 		if q.Attributes != "" || q.ExcludedAttributes != "" {
 			filtered, err := util.ApplyAttributeSelection(&users[i], q.Attributes, q.ExcludedAttributes)
