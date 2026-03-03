@@ -57,11 +57,8 @@ func (h *UserHandlers) ListUsers(c *gin.Context) {
 	q := c.MustGet("scim_query").(*model.ResourceQuery)
 
 	// 验证过滤器语法
-	if q.Filter != "" {
-		if err := util.ValidateFilter(q.Filter); err != nil {
-			ErrorHandler(c, err, http.StatusBadRequest, "invalidFilter")
-			return
-		}
+	if err := h.validateFilter(c, q.Filter); err != nil {
+		return
 	}
 
 	users, total, err := h.store.ListUsers(q)
@@ -71,34 +68,13 @@ func (h *UserHandlers) ListUsers(c *gin.Context) {
 	}
 
 	// 检查是否需要加载用户的组信息
-	needGroups := strings.Contains(q.Attributes, "groups") || strings.Contains(q.ExcludedAttributes, "groups")
+	needGroups := h.needsGroups(q)
 
-	// 给每个用户设置默认Schema并应用属性选择
-	var resources []interface{}
-	for i := range users {
-		users[i].Schemas = []string{h.cfg.DefaultSchema}
-
-		// 如果需要，加载用户所属的组
-		if needGroups {
-			groups, err := h.store.GetUserGroups(users[i].ID)
-			if err != nil {
-				ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-				return
-			}
-			users[i].Groups = groups
-		}
-
-		// 应用属性选择
-		if q.Attributes != "" || q.ExcludedAttributes != "" {
-			filtered, err := util.ApplyAttributeSelection(&users[i], q.Attributes, q.ExcludedAttributes)
-			if err != nil {
-				ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-				return
-			}
-			resources = append(resources, filtered)
-		} else {
-			resources = append(resources, users[i])
-		}
+	// 处理用户列表并应用属性选择
+	resources := h.processUserList(users, q, needGroups)
+	if resources == nil {
+		ErrorHandler(c, errors.New("failed to process user list"), http.StatusInternalServerError, "internalError")
+		return
 	}
 
 	// 构造SCIM标准列表响应
@@ -135,18 +111,9 @@ func (h *UserHandlers) GetUser(c *gin.Context) {
 		ErrorHandler(c, err, http.StatusNotFound, "notFound")
 		return
 	}
-	user.Schemas = []string{h.cfg.DefaultSchema}
 
-	// 检查是否需要加载用户的组信息
-	needGroups := strings.Contains(q.Attributes, "groups") || strings.Contains(q.ExcludedAttributes, "groups")
-	if needGroups {
-		groups, err := h.store.GetUserGroups(user.ID)
-		if err != nil {
-			ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-			return
-		}
-		user.Groups = groups
-	}
+	// 设置Schema并加载组信息
+	h.enrichUser(user, q)
 
 	// 应用属性选择
 	if q.Attributes != "" || q.ExcludedAttributes != "" {
@@ -184,16 +151,12 @@ func (h *UserHandlers) CreateUser(c *gin.Context) {
 	}
 
 	// 验证必填字段
-	if u.UserName == "" {
-		ErrorHandler(c, errors.New("userName is required"), http.StatusBadRequest, "invalidValue")
-		return
-	}
-	if u.Name.GivenName == "" || u.Name.FamilyName == "" {
-		ErrorHandler(c, errors.New("name.givenName and name.familyName are required"), http.StatusBadRequest, "invalidValue")
+	if err := h.validateUserRequiredFields(&u); err != nil {
+		ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
 		return
 	}
 
-	// 生成唯一ID
+	// 生成唯一ID并设置Schema
 	u.ID = uuid.NewString()
 	u.Schemas = []string{h.cfg.DefaultSchema}
 
@@ -278,18 +241,10 @@ func (h *UserHandlers) PatchUser(c *gin.Context) {
 		return
 	}
 
-	// 校验Patch Schema
-	if len(req.Schemas) == 0 || req.Schemas[0] != model.PatchSchema {
-		ErrorHandler(c, errors.New("invalid patch schema"), http.StatusBadRequest, "invalidSchema")
+	// 验证Patch请求
+	if err := h.validatePatchRequest(&req); err != nil {
+		ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
 		return
-	}
-
-	// 验证操作
-	for _, op := range req.Operations {
-		if op.Op != "add" && op.Op != "remove" && op.Op != "replace" {
-			ErrorHandler(c, errors.New("invalid operation: "+op.Op), http.StatusBadRequest, "invalidValue")
-			return
-		}
 	}
 
 	// 执行补丁更新
@@ -363,49 +318,27 @@ func (h *GroupHandlers) ListGroups(c *gin.Context) {
 	q := c.MustGet("scim_query").(*model.ResourceQuery)
 
 	// 验证过滤器语法
-	if q.Filter != "" {
-		if err := util.ValidateFilter(q.Filter); err != nil {
-			ErrorHandler(c, err, http.StatusBadRequest, "invalidFilter")
-			return
-		}
+	if err := h.validateFilter(c, q.Filter); err != nil {
+		return
 	}
-	preloadMembers := false
-	if q.Attributes != "" {
-		attrs := strings.Split(q.Attributes, ",")
-		var filtered []string
-		for _, attr := range attrs {
-			if strings.TrimSpace(attr) == "members" {
-				preloadMembers = true
-			} else {
-				filtered = append(filtered, attr)
-			}
-		}
-		q.Attributes = strings.Join(filtered, ",")
-	}
+
+	// 检查是否需要预加载成员
+	preloadMembers := strings.Contains(q.Attributes, "members") || strings.Contains(q.ExcludedAttributes, "members")
+
 	groups, total, err := h.store.ListGroups(q, preloadMembers)
 	if err != nil {
 		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
 		return
 	}
 
-	// 给每个组设置默认Schema并应用属性选择
-	var resources []interface{}
-	for i := range groups {
-		groups[i].Schemas = []string{h.cfg.GroupSchema}
-
-		// 应用属性选择
-		if q.Attributes != "" || q.ExcludedAttributes != "" {
-			filtered, err := util.ApplyAttributeSelection(&groups[i], q.Attributes, q.ExcludedAttributes)
-			if err != nil {
-				ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-				return
-			}
-			resources = append(resources, filtered)
-		} else {
-			resources = append(resources, groups[i])
-		}
+	// 处理组列表并应用属性选择
+	resources := h.processGroupList(groups, q)
+	if resources == nil {
+		ErrorHandler(c, errors.New("failed to process group list"), http.StatusInternalServerError, "internalError")
+		return
 	}
 
+	// 构造SCIM标准列表响应
 	c.JSON(http.StatusOK, model.ListResponse{
 		Schemas:      []string{h.cfg.ListSchema},
 		TotalResults: int(total),
@@ -434,24 +367,16 @@ func (h *GroupHandlers) GetGroup(c *gin.Context) {
 	id := c.Param("id")
 	q := c.MustGet("scim_query").(*model.ResourceQuery)
 
-	preloadMembers := false
-	if q.Attributes != "" {
-		attrs := strings.Split(q.Attributes, ",")
-		var filtered []string
-		for _, attr := range attrs {
-			if strings.TrimSpace(attr) == "members" {
-				preloadMembers = true
-			} else {
-				filtered = append(filtered, attr)
-			}
-		}
-		q.Attributes = strings.Join(filtered, ",")
-	}
+	// 检查是否需要预加载成员
+	preloadMembers := strings.Contains(q.Attributes, "members") || strings.Contains(q.ExcludedAttributes, "members")
+
 	group, err := h.store.GetGroup(id, preloadMembers)
 	if err != nil {
 		ErrorHandler(c, err, http.StatusNotFound, "notFound")
 		return
 	}
+
+	// 设置Schema
 	group.Schemas = []string{h.cfg.GroupSchema}
 
 	// 应用属性选择
@@ -470,7 +395,7 @@ func (h *GroupHandlers) GetGroup(c *gin.Context) {
 
 // CreateGroup 创建组
 // @Summary 创建组
-// @Description 创建新组，可以包含成员
+// @Description 创建新组，需要提供组显示名称
 // @Tags Groups
 // @Accept json
 // @Produce json
@@ -495,32 +420,18 @@ func (h *GroupHandlers) CreateGroup(c *gin.Context) {
 		return
 	}
 
-	// 验证成员（如果提供了成员）
-	if len(g.Members) > 0 {
-		for _, member := range g.Members {
-			if member.Value == "" {
-				ErrorHandler(c, errors.New("member value (userId) is required"), http.StatusBadRequest, "invalidValue")
-				return
-			}
-
-			// 验证用户是否存在
-			_, err := h.store.GetUser(member.Value)
-			if err != nil {
-				ErrorHandler(c, errors.New("user not found: "+member.Value), http.StatusBadRequest, "invalidValue")
-				return
-			}
-
-			// 设置 GroupID
-			member.GroupID = g.ID
-		}
-	}
-
+	// 生成唯一ID并设置Schema
 	g.ID = uuid.NewString()
 	g.Schemas = []string{h.cfg.GroupSchema}
 
+	// 保存组
 	if err := h.store.CreateGroup(&g); err != nil {
 		if errors.Is(err, model.ErrUniqueness) {
 			ErrorHandler(c, err, http.StatusConflict, "uniqueness")
+			return
+		}
+		if errors.Is(err, model.ErrNotFound) {
+			ErrorHandler(c, errors.New("invalid member reference"), http.StatusBadRequest, "invalidValue")
 			return
 		}
 		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
@@ -559,6 +470,7 @@ func (h *GroupHandlers) UpdateGroup(c *gin.Context) {
 		return
 	}
 
+	// 强制使用URL中的ID
 	g.ID = id
 	g.Schemas = []string{h.cfg.GroupSchema}
 
@@ -597,19 +509,13 @@ func (h *GroupHandlers) PatchGroup(c *gin.Context) {
 		return
 	}
 
-	if len(req.Schemas) == 0 || req.Schemas[0] != model.PatchSchema {
-		ErrorHandler(c, errors.New("invalid patch schema"), http.StatusBadRequest, "invalidSchema")
+	// 验证Patch请求
+	if err := h.validatePatchRequest(&req); err != nil {
+		ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
 		return
 	}
 
-	// 验证操作
-	for _, op := range req.Operations {
-		if op.Op != "add" && op.Op != "remove" && op.Op != "replace" {
-			ErrorHandler(c, errors.New("invalid operation: "+op.Op), http.StatusBadRequest, "invalidValue")
-			return
-		}
-	}
-
+	// 执行补丁更新
 	if err := h.store.PatchGroup(id, req.Operations); err != nil {
 		if errors.Is(err, model.ErrNotFound) {
 			ErrorHandler(c, err, http.StatusNotFound, "notFound")
@@ -619,7 +525,8 @@ func (h *GroupHandlers) PatchGroup(c *gin.Context) {
 		return
 	}
 
-	group, err := h.store.GetGroup(id, false)
+	// 返回更新后的组
+	group, err := h.store.GetGroup(id, true)
 	if err != nil {
 		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
 		return
@@ -652,6 +559,7 @@ func (h *GroupHandlers) DeleteGroup(c *gin.Context) {
 		return
 	}
 
+	// SCIM标准：删除成功返回204 No Content
 	c.Status(http.StatusNoContent)
 }
 
@@ -662,32 +570,35 @@ func (h *GroupHandlers) DeleteGroup(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param id path string true "组ID"
-// @Param request body object true "用户ID" example({"userId":"user-123"})
-// @Success 200 {object} model.Group "添加成功，返回更新后的组信息"
+// @Param member body model.Member true "成员信息"
+// @Success 201 {object} model.Group "添加成功"
 // @Failure 400 {object} model.ErrorResponse "请求参数错误"
 // @Failure 401 {object} model.ErrorResponse "未授权"
 // @Failure 404 {object} model.ErrorResponse "组或用户不存在"
-// @Failure 409 {object} model.ErrorResponse "用户已在组中"
 // @Failure 500 {object} model.ErrorResponse "服务器内部错误"
 // @Router /Groups/{id}/members [post]
 // @Security BearerAuth
 func (h *GroupHandlers) AddUserToGroup(c *gin.Context) {
 	groupID := c.Param("id")
-
-	var req struct {
-		UserID string `json:"userId" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var member model.Member
+	if err := c.ShouldBindJSON(&member); err != nil {
 		ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
 		return
 	}
 
-	if err := h.store.AddUserToGroup(groupID, req.UserID); err != nil {
+	// 验证成员值
+	if member.Value == "" {
+		ErrorHandler(c, errors.New("member value is required"), http.StatusBadRequest, "invalidValue")
+		return
+	}
+
+	// 添加用户到组
+	if err := h.store.AddUserToGroup(groupID, member.Value); err != nil {
 		if errors.Is(err, model.ErrNotFound) {
 			ErrorHandler(c, err, http.StatusNotFound, "notFound")
 			return
 		}
-		if err.Error() == "user already in group" {
+		if errors.Is(err, model.ErrUniqueness) {
 			ErrorHandler(c, err, http.StatusConflict, "uniqueness")
 			return
 		}
@@ -695,13 +606,14 @@ func (h *GroupHandlers) AddUserToGroup(c *gin.Context) {
 		return
 	}
 
-	group, err := h.store.GetGroup(groupID, false)
+	// 返回更新后的组
+	group, err := h.store.GetGroup(groupID, true)
 	if err != nil {
 		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
 		return
 	}
 	group.Schemas = []string{h.cfg.GroupSchema}
-	c.JSON(http.StatusOK, group)
+	c.JSON(http.StatusCreated, group)
 }
 
 // RemoveUserFromGroup 从组中移除用户
@@ -722,12 +634,9 @@ func (h *GroupHandlers) RemoveUserFromGroup(c *gin.Context) {
 	groupID := c.Param("id")
 	userID := c.Param("userId")
 
+	// 从组中移除用户
 	if err := h.store.RemoveUserFromGroup(groupID, userID); err != nil {
 		if errors.Is(err, model.ErrNotFound) {
-			ErrorHandler(c, err, http.StatusNotFound, "notFound")
-			return
-		}
-		if err.Error() == "user not in group" {
 			ErrorHandler(c, err, http.StatusNotFound, "notFound")
 			return
 		}
@@ -735,5 +644,151 @@ func (h *GroupHandlers) RemoveUserFromGroup(c *gin.Context) {
 		return
 	}
 
+	// SCIM标准：删除成功返回204 No Content
 	c.Status(http.StatusNoContent)
+}
+
+// ---------------------- User 辅助方法 ----------------------
+
+// validateFilter 验证过滤器语法
+func (h *UserHandlers) validateFilter(c *gin.Context, filter string) error {
+	if filter == "" {
+		return nil
+	}
+	if err := util.ValidateFilter(filter); err != nil {
+		ErrorHandler(c, err, http.StatusBadRequest, "invalidFilter")
+		return err
+	}
+	return nil
+}
+
+// needsGroups 检查是否需要加载用户的组信息
+func (h *UserHandlers) needsGroups(q *model.ResourceQuery) bool {
+	return strings.Contains(q.Attributes, "groups") ||
+		strings.Contains(q.ExcludedAttributes, "groups")
+}
+
+// processUserList 处理用户列表并应用属性选择
+func (h *UserHandlers) processUserList(users []model.User, q *model.ResourceQuery, needGroups bool) []interface{} {
+	resources := make([]interface{}, 0, len(users))
+
+	for i := range users {
+		users[i].Schemas = []string{h.cfg.DefaultSchema}
+
+		// 如果需要，加载用户所属的组
+		if needGroups {
+			groups, err := h.store.GetUserGroups(users[i].ID)
+			if err != nil {
+				return nil
+			}
+			users[i].Groups = groups
+		}
+
+		// 应用属性选择
+		if q.Attributes != "" || q.ExcludedAttributes != "" {
+			filtered, err := util.ApplyAttributeSelection(&users[i], q.Attributes, q.ExcludedAttributes)
+			if err != nil {
+				return nil
+			}
+			resources = append(resources, filtered)
+		} else {
+			resources = append(resources, users[i])
+		}
+	}
+
+	return resources
+}
+
+// enrichUser 丰富用户信息（设置Schema和加载组信息）
+func (h *UserHandlers) enrichUser(user *model.User, q *model.ResourceQuery) {
+	user.Schemas = []string{h.cfg.DefaultSchema}
+
+	// 检查是否需要加载用户的组信息
+	if h.needsGroups(q) {
+		groups, _ := h.store.GetUserGroups(user.ID)
+		user.Groups = groups
+	}
+}
+
+// validateUserRequiredFields 验证用户必填字段
+func (h *UserHandlers) validateUserRequiredFields(u *model.User) error {
+	if u.UserName == "" {
+		return errors.New("userName is required")
+	}
+	if u.Name.GivenName == "" || u.Name.FamilyName == "" {
+		return errors.New("name.givenName and name.familyName are required")
+	}
+	return nil
+}
+
+// validatePatchRequest 验证Patch请求
+func (h *UserHandlers) validatePatchRequest(req *model.PatchRequest) error {
+	// 校验Patch Schema
+	if len(req.Schemas) == 0 || req.Schemas[0] != model.PatchSchema.String() {
+		return errors.New("invalid patch schema")
+	}
+
+	// 验证操作类型
+	validOps := map[string]bool{"add": true, "remove": true, "replace": true}
+	for _, op := range req.Operations {
+		if !validOps[op.Op] {
+			return errors.New("invalid operation: " + op.Op)
+		}
+	}
+
+	return nil
+}
+
+// ---------------------- Group 辅助方法 ----------------------
+
+// validateFilter 验证过滤器语法
+func (h *GroupHandlers) validateFilter(c *gin.Context, filter string) error {
+	if filter == "" {
+		return nil
+	}
+	if err := util.ValidateFilter(filter); err != nil {
+		ErrorHandler(c, err, http.StatusBadRequest, "invalidFilter")
+		return err
+	}
+	return nil
+}
+
+// processGroupList 处理组列表并应用属性选择
+func (h *GroupHandlers) processGroupList(groups []model.Group, q *model.ResourceQuery) []interface{} {
+	resources := make([]interface{}, 0, len(groups))
+
+	for i := range groups {
+		groups[i].Schemas = []string{h.cfg.GroupSchema}
+
+		// 应用属性选择
+		if q.Attributes != "" || q.ExcludedAttributes != "" {
+			filtered, err := util.ApplyAttributeSelection(&groups[i], q.Attributes, q.ExcludedAttributes)
+			if err != nil {
+				return nil
+			}
+			resources = append(resources, filtered)
+		} else {
+			resources = append(resources, groups[i])
+		}
+	}
+
+	return resources
+}
+
+// validatePatchRequest 验证Patch请求
+func (h *GroupHandlers) validatePatchRequest(req *model.PatchRequest) error {
+	// 校验Patch Schema
+	if len(req.Schemas) == 0 || req.Schemas[0] != model.PatchSchema.String() {
+		return errors.New("invalid patch schema")
+	}
+
+	// 验证操作类型
+	validOps := map[string]bool{"add": true, "remove": true, "replace": true}
+	for _, op := range req.Operations {
+		if !validOps[op.Op] {
+			return errors.New("invalid operation: " + op.Op)
+		}
+	}
+
+	return nil
 }

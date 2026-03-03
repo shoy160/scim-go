@@ -19,15 +19,15 @@ func setupTestRouter() (*gin.Engine, store.Store) {
 	s := store.NewMemory()
 
 	cfg := &ScimConfig{
-		DefaultSchema: model.UserSchema,
-		GroupSchema:   model.GroupSchema,
-		ErrorSchema:   model.ErrorSchema,
-		ListSchema:    model.ListSchema,
+		DefaultSchema: model.UserSchema.String(),
+		GroupSchema:   model.GroupSchema.String(),
+		ErrorSchema:   model.ErrorSchema.String(),
+		ListSchema:    model.ListSchema.String(),
 		DefaultCount:  20,
 		MaxCount:      100,
 	}
 
-	RegisterRoutes(r, s, cfg, "test-token")
+	RegisterRoutes(r, s, cfg, "test-token", true, "/swagger")
 	return r, s
 }
 
@@ -153,8 +153,8 @@ func TestUserHandlers(t *testing.T) {
 
 		var response model.ListResponse
 		json.Unmarshal(w.Body.Bytes(), &response)
-		if response.Schemas[0] != model.ListSchema {
-			t.Errorf("ListUsers() schema = %v, want %v", response.Schemas[0], model.ListSchema)
+		if response.Schemas[0] != model.ListSchema.String() {
+			t.Errorf("ListUsers() schema = %v, want %v", response.Schemas[0], model.ListSchema.String())
 		}
 	})
 
@@ -293,8 +293,8 @@ func TestGroupHandlers(t *testing.T) {
 
 		var response model.ListResponse
 		json.Unmarshal(w.Body.Bytes(), &response)
-		if response.Schemas[0] != model.ListSchema {
-			t.Errorf("ListGroups() schema = %v, want %v", response.Schemas[0], model.ListSchema)
+		if response.Schemas[0] != model.ListSchema.String() {
+			t.Errorf("ListGroups() schema = %v, want %v", response.Schemas[0], model.ListSchema.String())
 		}
 	})
 }
@@ -532,10 +532,8 @@ func TestGroupMemberManagement(t *testing.T) {
 	})
 
 	t.Run("Add User to Group", func(t *testing.T) {
-		addReq := struct {
-			UserID string `json:"userId"`
-		}{
-			UserID: createdUser1.ID,
+		addReq := model.Member{
+			Value: createdUser1.ID,
 		}
 
 		body, _ := json.Marshal(addReq)
@@ -546,8 +544,8 @@ func TestGroupMemberManagement(t *testing.T) {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		if w.Code != http.StatusOK {
-			t.Errorf("Add User to Group status = %v, want %v", w.Code, http.StatusOK)
+		if w.Code != http.StatusCreated {
+			t.Errorf("Add User to Group status = %v, want %v", w.Code, http.StatusCreated)
 		}
 
 		var response model.Group
@@ -558,10 +556,8 @@ func TestGroupMemberManagement(t *testing.T) {
 	})
 
 	t.Run("Add Duplicate User to Group", func(t *testing.T) {
-		addReq := struct {
-			UserID string `json:"userId"`
-		}{
-			UserID: createdUser1.ID,
+		addReq := model.Member{
+			Value: createdUser1.ID,
 		}
 
 		body, _ := json.Marshal(addReq)
@@ -578,10 +574,8 @@ func TestGroupMemberManagement(t *testing.T) {
 	})
 
 	t.Run("Add User to Non-existent Group", func(t *testing.T) {
-		addReq := struct {
-			UserID string `json:"userId"`
-		}{
-			UserID: createdUser1.ID,
+		addReq := model.Member{
+			Value: createdUser1.ID,
 		}
 
 		body, _ := json.Marshal(addReq)
@@ -598,10 +592,8 @@ func TestGroupMemberManagement(t *testing.T) {
 	})
 
 	t.Run("Add Non-existent User to Group", func(t *testing.T) {
-		addReq := struct {
-			UserID string `json:"userId"`
-		}{
-			UserID: "non-existent-user",
+		addReq := model.Member{
+			Value: "non-existent-user",
 		}
 
 		body, _ := json.Marshal(addReq)

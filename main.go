@@ -3,14 +3,13 @@
 // @description SCIM (System for Cross-domain Identity Management) 2.0 实现，提供用户和组管理功能
 // @termsOfService https://example.com/terms
 
-// @contact.name API Support
-// @contact.url https://example.com/support
-// @contact.email support@example.com
+// @contact.name shoy160
+// @contact.email shoy160@qq.com
 
 // @license.name Apache 2.0
 // @license.url http://www.apache.org/licenses/LICENSE-2.0.html
 
-// @host localhost:8000
+// @host localhost:8080
 // @BasePath /scim/v2
 
 // @securityDefinitions.apikey BearerAuth
@@ -92,7 +91,7 @@ func main() {
 		DefaultCount:  globalCfg.Pagination.DefaultCount,
 		MaxCount:      globalCfg.Pagination.MaxCount,
 	}
-	api.RegisterRoutes(r, s, scimCfg, globalCfg.Token)
+	api.RegisterRoutes(r, s, scimCfg, globalCfg.Token, globalCfg.Swagger.Enabled, globalCfg.Swagger.Path)
 
 	// 5. 启动HTTP服务
 	srv := &http.Server{

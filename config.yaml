@@ -28,3 +28,10 @@ scim:
   group_schema: "urn:ietf:params:scim:schemas:core:2.0:Group"
   error_schema: "urn:ietf:params:scim:api:messages:2.0:Error"
   list_schema: "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+
+# Swagger文档配置
+swagger:
+  # 是否启用Swagger功能
+  enabled: true
+  # Swagger UI访问路径
+  path: "/swagger"

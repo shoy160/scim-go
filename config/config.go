@@ -36,6 +36,11 @@ type Config struct {
 		ErrorSchema   string `yaml:"error_schema"`
 		ListSchema    string `yaml:"list_schema"`
 	} `yaml:"scim"`
+
+	Swagger struct {
+		Enabled  bool   `yaml:"enabled"`
+		Path     string `yaml:"path"`
+	} `yaml:"swagger"`
 }
 
 // ConfigManager 配置管理器
@@ -181,6 +186,10 @@ func LoadConfig(path string) (Config, bool) {
 	globalCfg.SCIM.GroupSchema = cm.GetString("SCIM_GROUP_SCHEMA", globalCfg.SCIM.GroupSchema)
 	globalCfg.SCIM.ErrorSchema = cm.GetString("SCIM_ERROR_SCHEMA", globalCfg.SCIM.ErrorSchema)
 	globalCfg.SCIM.ListSchema = cm.GetString("SCIM_LIST_SCHEMA", globalCfg.SCIM.ListSchema)
+
+	// Swagger 配置
+	globalCfg.Swagger.Enabled = cm.GetBool("SWAGGER_ENABLED", globalCfg.Swagger.Enabled)
+	globalCfg.Swagger.Path = cm.GetString("SWAGGER_PATH", globalCfg.Swagger.Path)
 	// 测试模式：打印配置并退出
 	if os.Getenv("TEST_ENV") == "true" {
 		log.Println("=== 测试配置管理器 ===")

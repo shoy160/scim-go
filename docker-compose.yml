@@ -1,17 +1,220 @@
 version: '3.8'
+
+# =============================================================================
+# SCIM 2.0 服务 Docker Compose 配置
+# =============================================================================
+# 支持多种 Storage Driver：memory / redis / mysql / postgres
+# 
+# 使用方法：
+# 1. 选择存储驱动：修改 .env 文件中的 STORAGE_DRIVER 变量
+# 2. 启动服务：docker-compose up -d
+# 3. 查看日志：docker-compose logs -f scim-server
+#
+# 存储驱动说明：
+# - memory: 内存存储，数据不持久化，适合开发和测试
+# - redis: Redis存储，高性能缓存，适合生产环境
+# - mysql: MySQL存储，关系型数据库，适合复杂查询场景
+# - postgres: PostgreSQL存储，高级特性，适合企业级应用
+# =============================================================================
+
 services:
-  # SCIM服务端
+  # ===========================================================================
+  # SCIM 服务端
+  # ===========================================================================
   scim-server:
     build: .
+    container_name: scim-server
     ports:
-      - "8080:8080"
+      - "${SCIM_PORT:-8080}:8080"
     restart: always
-    depends_on:
-      - mysql
-      - redis
     environment:
       - TZ=UTC
+      # 存储驱动配置（通过环境变量覆盖配置文件）
+      - SCIM_STORAGE_DRIVER=${STORAGE_DRIVER:-memory}
+      - SCIM_STORAGE_REDIS_URI=${REDIS_URI:-redis://redis:6379/0}
+      - SCIM_STORAGE_MYSQL_DSN=${MYSQL_DSN:-root:password@tcp(mysql:3306)/scim?charset=utf8mb4&parseTime=True&loc=Local}
+      - SCIM_STORAGE_POSTGRES_DSN=${POSTGRES_DSN:-host=postgres user=postgres password=postgres dbname=scim port=5432 sslmode=disable}
+      # 其他配置
+      - SCIM_MODE=${SCIM_MODE:-release}
+      - SCIM_LOG_LEVEL=${LOG_LEVEL:-info}
+      - SCIM_TOKEN=${SCIM_TOKEN:-aGCIhV2JtgAezYduMpE1rK6Omy}
+      # Swagger配置
+      - SCIM_SWAGGER_ENABLED=${SWAGGER_ENABLED:-true}
+      - SCIM_SWAGGER_PATH=${SWAGGER_PATH:-/swagger}
     volumes:
-      - ./config.yaml:/app/config.yaml # 挂载配置文件（方便修改）
+      # 挂载配置文件（可选，用于覆盖默认配置）
+      - ./config.yaml:/app/config.yaml:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - scim-network
+    # 根据存储驱动配置依赖关系
+    # 注意：由于使用了 profiles，依赖服务可能不存在
+    # 实际依赖关系由启动时选择的 profile 决定
+
+  # ===========================================================================
+  # Redis 服务（用于 redis 存储驱动）
+  # 特点：高性能内存数据库，适合缓存和会话存储
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: scim-redis
+    restart: always
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - scim-network
+    profiles:
+      - redis
+      - full
+
+  # ===========================================================================
+  # MySQL 服务（用于 mysql 存储驱动）
+  # 特点：成熟的关系型数据库，广泛的工具支持
+  # ===========================================================================
+  mysql:
+    image: mysql:8.0
+    container_name: scim-mysql
+    restart: always
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-password}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-scim}
+      - MYSQL_USER=${MYSQL_USER:-scim}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-scim_password}
+      - TZ=UTC
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # 初始化SQL脚本（如果有）
+      - ./scripts/mysql-init:/docker-entrypoint-initdb.d:ro
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+      --max_connections=200
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - scim-network
+    profiles:
+      - mysql
+      - full
+
+  # ===========================================================================
+  # PostgreSQL 服务（用于 postgres 存储驱动）
+  # 特点：高级关系型数据库，支持JSON和复杂查询
+  # ===========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: scim-postgres
+    restart: always
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-scim}
+      - TZ=UTC
+      - PGTZ=UTC
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # 初始化SQL脚本（如果有）
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-scim}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - scim-network
+    profiles:
+      - postgres
+      - full
+
+  # ===========================================================================
+  # Adminer - 数据库管理工具（可选）
+  # 用于管理 MySQL 和 PostgreSQL 数据库
+  # 访问地址：http://localhost:8081
+  # ===========================================================================
+  adminer:
+    image: adminer:latest
+    container_name: scim-adminer
+    restart: always
+    ports:
+      - "${ADMINER_PORT:-8081}:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=mysql
+    networks:
+      - scim-network
+    profiles:
+      - mysql
+      - postgres
+      - full
+    depends_on:
+      - mysql
+      - postgres
+
+  # ===========================================================================
+  # Redis Commander - Redis 管理工具（可选）
+  # 用于管理 Redis 数据
+  # 访问地址：http://localhost:8082
+  # ===========================================================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: scim-redis-commander
+    restart: always
+    ports:
+      - "${REDIS_COMMANDER_PORT:-8082}:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    networks:
+      - scim-network
+    profiles:
+      - redis
+      - full
+    depends_on:
+      - redis
+
+# =============================================================================
+# 数据卷定义
+# =============================================================================
+volumes:
+  redis_data:
+    driver: local
+  mysql_data:
+    driver: local
+  postgres_data:
+    driver: local
+
+# =============================================================================
+# 网络定义
+# =============================================================================
+networks:
+  scim-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

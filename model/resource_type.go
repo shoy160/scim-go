@@ -2,12 +2,12 @@ package model
 
 // ResourceType SCIM ResourceType 定义 (RFC 7643)
 type ResourceType struct {
-	Schemas    []string              `json:"schemas"`
-	ID         string                `json:"id"`
-	Name       string                `json:"name"`
-	Endpoint   string                `json:"endpoint"`
-	Description string               `json:"description,omitempty"`
-	Schema     string                `json:"schema"`
+	Schemas          []string          `json:"schemas"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Endpoint         string            `json:"endpoint"`
+	Description      string            `json:"description,omitempty"`
+	Schema           string            `json:"schema"`
 	SchemaExtensions []SchemaExtension `json:"schemaExtensions,omitempty"`
 }
 
@@ -44,16 +44,16 @@ type Schema struct {
 
 // ServiceProviderConfig SCIM 服务提供者配置 (RFC 7643)
 type ServiceProviderConfig struct {
-	Schemas               []string              `json:"schemas"`
-	DocumentationURI      string                `json:"documentationUri,omitempty"`
-	Patch                 Supported             `json:"patch"`
-	Bulk                  BulkSupport           `json:"bulk"`
-	Filter                FilterSupport         `json:"filter"`
-	ChangePassword        Supported             `json:"changePassword"`
-	Sort                  Supported             `json:"sort"`
-	ETag                  Supported             `json:"etag"`
+	Schemas               []string               `json:"schemas"`
+	DocumentationURI      string                 `json:"documentationUri,omitempty"`
+	Patch                 Supported              `json:"patch"`
+	Bulk                  BulkSupport            `json:"bulk"`
+	Filter                FilterSupport          `json:"filter"`
+	ChangePassword        Supported              `json:"changePassword"`
+	Sort                  Supported              `json:"sort"`
+	ETag                  Supported              `json:"etag"`
 	AuthenticationSchemes []AuthenticationScheme `json:"authenticationSchemes"`
-	Meta                  *Meta                 `json:"meta,omitempty"`
+	Meta                  *Meta                  `json:"meta,omitempty"`
 }
 
 // Supported 功能支持状态
@@ -76,12 +76,12 @@ type FilterSupport struct {
 
 // AuthenticationScheme 认证方案
 type AuthenticationScheme struct {
-	Type        string `json:"type"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	SpecURI     string `json:"specUri,omitempty"`
+	Type             string `json:"type"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	SpecURI          string `json:"specUri,omitempty"`
 	DocumentationURI string `json:"documentationUri,omitempty"`
-	Primary     bool   `json:"primary,omitempty"`
+	Primary          bool   `json:"primary,omitempty"`
 }
 
 // Meta 资源元数据
@@ -110,7 +110,7 @@ func GetUserResourceType() *ResourceType {
 		Name:        "User",
 		Endpoint:    "/Users",
 		Description: "User Account",
-		Schema:      UserSchema,
+		Schema:      UserSchema.String(),
 	}
 }
 
@@ -122,7 +122,7 @@ func GetGroupResourceType() *ResourceType {
 		Name:        "Group",
 		Endpoint:    "/Groups",
 		Description: "Group",
-		Schema:      GroupSchema,
+		Schema:      GroupSchema.String(),
 	}
 }
 
@@ -130,7 +130,7 @@ func GetGroupResourceType() *ResourceType {
 func GetUserSchema() *Schema {
 	return &Schema{
 		Schemas:     []string{SchemaDefinitionSchema},
-		ID:          UserSchema,
+		ID:          UserSchema.String(),
 		Name:        "User",
 		Description: "User Account",
 		Attributes: []SchemaAttribute{
@@ -199,11 +199,11 @@ func GetUserSchema() *Schema {
 				Required:    false,
 			},
 			{
-				Name:        "profileUrl",
-				Type:        "reference",
-				MultiValued: false,
-				Description: "A fully qualified URL pointing to a page representing the User online.",
-				Required:    false,
+				Name:           "profileUrl",
+				Type:           "reference",
+				MultiValued:    false,
+				Description:    "A fully qualified URL pointing to a page representing the User online.",
+				Required:       false,
 				ReferenceTypes: []string{"external"},
 			},
 			{
@@ -237,11 +237,11 @@ func GetUserSchema() *Schema {
 						Required:    false,
 					},
 					{
-						Name:        "type",
-						Type:        "string",
-						MultiValued: false,
-						Description: "A label indicating the attribute's function.",
-						Required:    false,
+						Name:            "type",
+						Type:            "string",
+						MultiValued:     false,
+						Description:     "A label indicating the attribute's function.",
+						Required:        false,
 						CanonicalValues: []string{"work", "home", "other"},
 					},
 					{
@@ -309,7 +309,7 @@ func GetUserSchema() *Schema {
 func GetGroupSchema() *Schema {
 	return &Schema{
 		Schemas:     []string{SchemaDefinitionSchema},
-		ID:          GroupSchema,
+		ID:          GroupSchema.String(),
 		Name:        "Group",
 		Description: "Group",
 		Attributes: []SchemaAttribute{
@@ -339,11 +339,11 @@ func GetGroupSchema() *Schema {
 						Required:    false,
 					},
 					{
-						Name:        "$ref",
-						Type:        "reference",
-						MultiValued: false,
-						Description: "The URI corresponding to a SCIM resource that is a member of this Group.",
-						Required:    false,
+						Name:           "$ref",
+						Type:           "reference",
+						MultiValued:    false,
+						Description:    "The URI corresponding to a SCIM resource that is a member of this Group.",
+						Required:       false,
 						ReferenceTypes: []string{"User", "Group"},
 					},
 					{
@@ -354,11 +354,11 @@ func GetGroupSchema() *Schema {
 						Required:    false,
 					},
 					{
-						Name:        "type",
-						Type:        "string",
-						MultiValued: false,
-						Description: "A label indicating the type of resource.",
-						Required:    false,
+						Name:            "type",
+						Type:            "string",
+						MultiValued:     false,
+						Description:     "A label indicating the type of resource.",
+						Required:        false,
 						CanonicalValues: []string{"User", "Group"},
 					},
 				},

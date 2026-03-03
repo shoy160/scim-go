@@ -259,7 +259,7 @@ Swagger 文档的配置信息定义在 `main.go` 文件的注释中：
 
 **地址**：`http://localhost:8080/swagger/index.html`
 
-**认证**：需要在右上角点击 "Authorize" 按钮，输入 Bearer Token（默认：`aGCIhV2JtgAezYduMpE1rK6Omy`）
+**说明**：Swagger UI 界面无需认证即可访问，便于开发调试。在 Swagger UI 中测试 API 时，需要在右上角点击 "Authorize" 按钮，输入 Bearer Token（默认：`aGCIhV2JtgAezYduMpE1rK6Omy`）进行认证。
 
 **Swagger JSON 文档**：`http://localhost:8080/swagger/doc.json`
 
@@ -268,6 +268,46 @@ Swagger 文档的配置信息定义在 `main.go` 文件的注释中：
 - **API 注释**：所有 API 接口都已添加了 Swagger 注释，包括接口路径、请求方法、参数说明、响应格式等
 - **模型定义**：数据模型（如 User、Group、Email 等）会自动从代码中生成
 - **文档更新**：每次修改 API 或模型后，需要重新运行 `swag init` 命令更新文档
+
+#### 6. Swagger 配置
+
+本项目支持通过配置文件或环境变量控制 Swagger 功能：
+
+**配置文件（config.yaml）**：
+```yaml
+# Swagger文档配置
+swagger:
+  # 是否启用Swagger功能
+  enabled: true
+  # Swagger UI访问路径
+  path: "/swagger"
+```
+
+**环境变量**：
+- `SCIM_SWAGGER_ENABLED`：控制 Swagger 功能的启用状态（true/false）
+- `SCIM_SWAGGER_PATH`：指定 Swagger UI 的访问路径（如 "/swagger"、"/api-docs" 等）
+
+**优先级**：环境变量配置优先于配置文件
+
+**访问方式**：
+- 默认路径：`http://localhost:8080/swagger/index.html`
+- 自定义路径：`http://localhost:8080{swagger.path}/index.html`
+
+#### 7. 常见问题：Failed to fetch 错误
+
+如果在 Swagger UI 中遇到 "Failed to fetch" 错误，通常是由以下原因导致：
+
+**原因 1：Host 配置不匹配**
+- 检查 `main.go` 中的 `@host` 配置是否与实际服务端口一致
+- 默认配置为 `localhost:8080`，如果服务运行在其他端口需要相应修改
+
+**原因 2：CORS 跨域问题**
+- 项目已配置 CORS 中间件，允许所有来源访问
+- 配置位于 `api/api.go` 中的 `RegisterRoutes` 函数
+
+**原因 3：服务未启动或端口错误**
+- 确保服务已正常启动：`curl http://localhost:8080/health`
+- 检查端口是否被占用
 
 ### 核心 API 端点
 
@@ -316,8 +356,102 @@ docker run -d -p 8080:8080 --name scim-go \
 
 ### 3. 使用 Docker Compose
 
+Docker Compose 支持多种 Storage Driver 配置，可根据需求灵活选择。
+
+#### 3.1 快速启动（内存存储，默认）
+
 ```bash
-docker-compose up -d
+# 使用默认配置（内存存储）
+docker compose up -d
+
+# 或指定环境变量文件
+docker compose --env-file .env up -d
+```
+
+#### 3.2 使用不同 Storage Driver
+
+**Memory 存储（开发和测试）**
+```bash
+# 编辑 .env 文件，设置 STORAGE_DRIVER=memory
+# 然后启动
+docker compose up -d
+```
+
+**Redis 存储**
+```bash
+# 编辑 .env 文件，设置 STORAGE_DRIVER=redis
+# 启动 Redis 和 SCIM 服务
+docker compose --profile redis up -d
+
+# 访问 Redis 管理界面：http://localhost:8082
+```
+
+**MySQL 存储**
+```bash
+# 编辑 .env 文件，设置 STORAGE_DRIVER=mysql
+# 启动 MySQL 和 SCIM 服务
+docker compose --profile mysql up -d
+
+# 访问数据库管理界面：http://localhost:8081
+# 系统类型：MySQL
+# 服务器：mysql
+# 用户名：root
+# 密码：password
+```
+
+**PostgreSQL 存储**
+```bash
+# 编辑 .env 文件，设置 STORAGE_DRIVER=postgres
+# 启动 PostgreSQL 和 SCIM 服务
+docker compose --profile postgres up -d
+
+# 访问数据库管理界面：http://localhost:8081
+# 系统类型：PostgreSQL
+# 服务器：postgres
+# 用户名：postgres
+# 密码：postgres
+```
+
+**启动所有服务（完整环境）**
+```bash
+# 启动所有存储服务和 SCIM 服务
+docker compose --profile full up -d
+```
+
+#### 3.3 环境变量配置
+
+复制示例配置文件并根据需要修改：
+
+```bash
+cp .env.example .env
+```
+
+主要配置项：
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `STORAGE_DRIVER` | 存储驱动类型 | `memory` |
+| `SCIM_PORT` | SCIM 服务端口 | `8080` |
+| `SCIM_TOKEN` | Bearer Token | `aGCIhV2JtgAezYduMpE1rK6Omy` |
+| `SWAGGER_ENABLED` | 启用 Swagger | `true` |
+
+#### 3.4 常用命令
+
+```bash
+# 查看服务状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f scim-server
+
+# 停止服务
+docker compose down
+
+# 停止并删除数据卷（谨慎使用）
+docker compose down -v
+
+# 重启服务
+docker compose restart scim-server
 ```
 
 ## 常见问题解决
