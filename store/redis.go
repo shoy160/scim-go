@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"scim-go/model"
+	"strings"
 
 	"github.com/go-redis/redis/v8"
 )
@@ -155,38 +157,53 @@ func (r *RedisStore) DeleteGroup(id string) error {
 
 // ---------------------- Group 成员管理 ----------------------
 
-// AddUserToGroup 添加用户到组
-func (r *RedisStore) AddUserToGroup(groupID, userID string) error {
+// AddMemberToGroup 添加成员到组（支持用户和组）
+func (r *RedisStore) AddMemberToGroup(groupID, memberID, memberType string) error {
 	// 验证组是否存在
 	group, err := r.GetGroup(groupID, false)
 	if err != nil {
 		return err
 	}
 
-	// 验证用户是否存在
-	_, err = r.GetUser(userID)
-	if err != nil {
-		return err
+	// 验证成员是否存在
+	if memberType == "User" {
+		_, err = r.GetUser(memberID)
+		if err != nil {
+			return err
+		}
+	} else if memberType == "Group" {
+		_, err = r.GetGroup(memberID, false)
+		if err != nil {
+			return err
+		}
+	} else {
+		return model.ErrInvalidValue
 	}
 
-	// 检查用户是否已在组中
+	// 检查成员是否已在组中
 	for _, member := range group.Members {
-		if member.Value == userID {
-			return errors.New("user already in group")
+		if member.Value == memberID {
+			return model.ErrUserAlreadyInGroup
 		}
 	}
 
 	// 添加成员
 	group.Members = append(group.Members, model.Member{
 		GroupID: groupID,
-		Value:   userID,
+		Value:   memberID,
+		Type:    memberType,
 	})
 
 	return r.CreateGroup(group)
 }
 
-// RemoveUserFromGroup 从组中移除用户
-func (r *RedisStore) RemoveUserFromGroup(groupID, userID string) error {
+// AddUserToGroup 添加用户到组
+func (r *RedisStore) AddUserToGroup(groupID, userID string) error {
+	return r.AddMemberToGroup(groupID, userID, "User")
+}
+
+// RemoveMemberFromGroup 从组中移除成员（支持用户和组）
+func (r *RedisStore) RemoveMemberFromGroup(groupID, memberID string) error {
 	// 验证组是否存在
 	group, err := r.GetGroup(groupID, false)
 	if err != nil {
@@ -197,7 +214,7 @@ func (r *RedisStore) RemoveUserFromGroup(groupID, userID string) error {
 	found := false
 	var newMembers []model.Member
 	for _, member := range group.Members {
-		if member.Value == userID {
+		if member.Value == memberID {
 			found = true
 		} else {
 			newMembers = append(newMembers, member)
@@ -205,11 +222,16 @@ func (r *RedisStore) RemoveUserFromGroup(groupID, userID string) error {
 	}
 
 	if !found {
-		return errors.New("user not in group")
+		return model.ErrUserNotInGroup
 	}
 
 	group.Members = newMembers
 	return r.CreateGroup(group)
+}
+
+// RemoveUserFromGroup 从组中移除用户
+func (r *RedisStore) RemoveUserFromGroup(groupID, userID string) error {
+	return r.RemoveMemberFromGroup(groupID, userID)
 }
 
 // IsUserInGroup 检查用户是否在组中
@@ -258,4 +280,26 @@ func (r *RedisStore) GetUserGroups(userID string) ([]model.UserGroup, error) {
 	}
 
 	return groups, nil
+}
+
+// RemoveEmailFromUser 从用户中移除指定邮箱
+func (r *RedisStore) RemoveEmailFromUser(userID, emailValue string) error {
+	key := fmt.Sprintf("user:%s:emails", userID)
+	_, err := r.cli.HDel(r.ctx, key, strings.ToLower(emailValue)).Result()
+	if err != nil {
+		return err
+	}
+	// 如果找不到记录，返回 nil 而不是错误（可能已经被删除）
+	return nil
+}
+
+// RemoveRoleFromUser 从用户中移除指定角色
+func (r *RedisStore) RemoveRoleFromUser(userID, roleValue string) error {
+	key := fmt.Sprintf("user:%s:roles", userID)
+	_, err := r.cli.HDel(r.ctx, key, strings.ToLower(roleValue)).Result()
+	if err != nil {
+		return err
+	}
+	// 如果找不到记录，返回 nil 而不是错误（可能已经被删除）
+	return nil
 }

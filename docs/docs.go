@@ -11,9 +11,8 @@ const docTemplate = `{
         "title": "{{.Title}}",
         "termsOfService": "https://example.com/terms",
         "contact": {
-            "name": "API Support",
-            "url": "https://example.com/support",
-            "email": "support@example.com"
+            "name": "shoy160",
+            "email": "shoy160@qq.com"
         },
         "license": {
             "name": "Apache 2.0",
@@ -109,7 +108,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "创建新组，可以包含成员",
+                "description": "创建新组，需要提供组显示名称",
                 "consumes": [
                     "application/json"
                 ],
@@ -445,18 +444,18 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "用户ID",
-                        "name": "request",
+                        "description": "成员信息",
+                        "name": "member",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/model.Member"
                         }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "添加成功，返回更新后的组信息",
+                    "201": {
+                        "description": "添加成功",
                         "schema": {
                             "$ref": "#/definitions/model.Group"
                         }
@@ -475,12 +474,6 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "组或用户不存在",
-                        "schema": {
-                            "$ref": "#/definitions/model.ErrorResponse"
-                        }
-                    },
-                    "409": {
-                        "description": "用户已在组中",
                         "schema": {
                             "$ref": "#/definitions/model.ErrorResponse"
                         }
@@ -968,15 +961,19 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "detail": {
+                    "description": "Detail 错误详情",
                     "type": "string"
                 },
                 "schemas": {
+                    "description": "Schemas SCIM错误Schema",
                     "type": "string"
                 },
                 "scimType": {
+                    "description": "ScimType SCIM错误类型",
                     "type": "string"
                 },
                 "status": {
+                    "description": "Status HTTP状态码",
                     "type": "integer"
                 }
             }
@@ -1000,7 +997,16 @@ const docTemplate = `{
                         "$ref": "#/definitions/model.Member"
                     }
                 },
+                "meta": {
+                    "description": "ResourceType由Meta.ResourceType动态生成，不持久化",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/model.Meta"
+                        }
+                    ]
+                },
                 "schemas": {
+                    "description": "存储SCIM schemas，包括自定义schemas",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -1011,20 +1017,26 @@ const docTemplate = `{
         "model.ListResponse": {
             "type": "object",
             "properties": {
-                "Resources": {},
+                "Resources": {
+                    "description": "Resources 资源列表"
+                },
                 "itemsPerPage": {
+                    "description": "ItemsPerPage 每页项目数",
                     "type": "integer"
                 },
                 "schemas": {
+                    "description": "Schemas SCIM Schema标识符数组",
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
                 },
                 "startIndex": {
+                    "description": "StartIndex 起始索引（从1开始）",
                     "type": "integer"
                 },
                 "totalResults": {
+                    "description": "TotalResults 总结果数量",
                     "type": "integer"
                 }
             }
@@ -1032,12 +1044,40 @@ const docTemplate = `{
         "model.Member": {
             "type": "object",
             "properties": {
+                "$ref": {
+                    "description": "成员引用URI（动态生成）",
+                    "type": "string"
+                },
                 "display": {
-                    "description": "用户名",
+                    "description": "成员显示名称",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "成员类型（User或Group）",
                     "type": "string"
                 },
                 "value": {
-                    "description": "用户ID",
+                    "description": "成员ID（用户或组）",
+                    "type": "string"
+                }
+            }
+        },
+        "model.Meta": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "string"
+                },
+                "lastModified": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "resourceType": {
+                    "type": "string"
+                },
+                "version": {
                     "type": "string"
                 }
             }
@@ -1049,7 +1089,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "op": {
-                    "description": "操作类型",
+                    "description": "Op 操作类型，必须是 add/remove/replace 之一",
                     "type": "string",
                     "enum": [
                         "add",
@@ -1058,11 +1098,11 @@ const docTemplate = `{
                     ]
                 },
                 "path": {
-                    "description": "属性路径：如name.givenName/emails[0].value",
+                    "description": "Path 属性路径，如 name.givenName 或 emails[0].value",
                     "type": "string"
                 },
                 "value": {
-                    "description": "操作值"
+                    "description": "Value 操作值"
                 }
             }
         },
@@ -1074,12 +1114,14 @@ const docTemplate = `{
             ],
             "properties": {
                 "Operations": {
+                    "description": "Operations 补丁操作列表",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/model.PatchOperation"
                     }
                 },
                 "schemas": {
+                    "description": "Schemas SCIM Schema标识符数组",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -1134,11 +1176,22 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "meta": {
+                    "description": "ResourceType由Meta.ResourceType动态生成，不持久化",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/model.Meta"
+                        }
+                    ]
+                },
                 "name": {
                     "description": "姓名信息（嵌套）",
                     "type": "object",
                     "properties": {
                         "familyName": {
+                            "type": "string"
+                        },
+                        "formatted": {
                             "type": "string"
                         },
                         "givenName": {
@@ -1152,6 +1205,10 @@ const docTemplate = `{
                 "nickName": {
                     "type": "string"
                 },
+                "password": {
+                    "description": "密码，非必填，默认不返回",
+                    "type": "string"
+                },
                 "profileUrl": {
                     "type": "string"
                 },
@@ -1163,6 +1220,7 @@ const docTemplate = `{
                     }
                 },
                 "schemas": {
+                    "description": "存储SCIM schemas，包括自定义schemas",
                     "type": "array",
                     "items": {
                         "type": "string"

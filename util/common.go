@@ -179,3 +179,59 @@ func fieldByNameIgnoreCase(v reflect.Value, name string) (reflect.Value, error) 
 func parsePath(path string) []string {
 	return strings.Split(path, ".")
 }
+
+// MergeValue 将 value 合并到 obj 中
+// 支持将 map[string]any 合并到结构体中
+func MergeValue(obj any, value any) error {
+	v := reflect.ValueOf(obj)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return errors.New("obj must be a non-nil pointer")
+	}
+	v = v.Elem()
+
+	// 如果 value 是 map[string]any，遍历并设置每个字段
+	valueMap, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("value must be a map[string]any")
+	}
+
+	for key, val := range valueMap {
+		if err := SetValueByPath(obj, key, val); err != nil {
+			// 如果某个字段设置失败，继续处理其他字段
+			continue
+		}
+	}
+	return nil
+}
+
+// ValidateEmailFormat 验证 email 格式是否符合 SCIM 2.0 规范
+func ValidateEmailFormat(email string) error {
+	if email == "" {
+		return errors.New("email cannot be empty")
+	}
+	// 简单的 email 格式验证
+	if !strings.Contains(email, "@") {
+		return fmt.Errorf("invalid email format: %s", email)
+	}
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid email format: %s", email)
+	}
+	if parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("invalid email format: %s", email)
+	}
+	if !strings.Contains(parts[1], ".") {
+		return fmt.Errorf("invalid email format: %s", email)
+	}
+	return nil
+}
+
+// ValidateRoleDefinition 验证 role 定义是否符合系统规范
+func ValidateRoleDefinition(role string) error {
+	if role == "" {
+		return errors.New("role cannot be empty")
+	}
+	// 可以在这里添加更多的角色验证逻辑
+	// 例如检查角色是否在预定义的角色列表中
+	return nil
+}

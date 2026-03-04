@@ -4,16 +4,18 @@ import (
 	"testing"
 
 	"scim-go/model"
+	"scim-go/store"
 )
 
 func TestMemoryStore_UserCRUD(t *testing.T) {
-	store := NewMemory()
+	store := store.NewMemory()
 
 	// 测试创建用户
 	user := &model.User{
 		ID:       "user-1",
 		UserName: "john.doe",
 		Name: struct {
+			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
@@ -70,7 +72,7 @@ func TestMemoryStore_UserCRUD(t *testing.T) {
 }
 
 func TestMemoryStore_GroupCRUD(t *testing.T) {
-	store := NewMemory()
+	store := store.NewMemory()
 
 	// 测试创建组
 	group := &model.Group{
@@ -123,8 +125,8 @@ func TestMemoryStore_GroupCRUD(t *testing.T) {
 	}
 }
 
-func TestMemoryStore_ListUsers(t *testing.T) {
-	store := NewMemory()
+func TestMemoryStore_ListUsers_Filter(t *testing.T) {
+	store := store.NewMemory()
 
 	// 创建测试用户
 	users := []*model.User{
@@ -202,8 +204,8 @@ func TestMemoryStore_ListUsers(t *testing.T) {
 	}
 }
 
-func TestMemoryStore_ListGroups(t *testing.T) {
-	store := NewMemory()
+func TestMemoryStore_ListGroups_Filter(t *testing.T) {
+	store := store.NewMemory()
 
 	// 创建测试组
 	groups := []*model.Group{
@@ -251,8 +253,8 @@ func TestMemoryStore_ListGroups(t *testing.T) {
 	}
 }
 
-func TestMemoryStore_PatchUser(t *testing.T) {
-	store := NewMemory()
+func TestMemoryStore_UpdateUser(t *testing.T) {
+	store := store.NewMemory()
 
 	// 创建用户
 	user := &model.User{
@@ -290,8 +292,8 @@ func TestMemoryStore_PatchUser(t *testing.T) {
 	}
 }
 
-func TestMemoryStore_PatchGroup(t *testing.T) {
-	store := NewMemory()
+func TestMemoryStore_UserGroups(t *testing.T) {
+	store := store.NewMemory()
 
 	// 创建组
 	group := &model.Group{

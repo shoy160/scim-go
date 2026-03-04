@@ -1,6 +1,7 @@
 package util
 
 import (
+	"scim-go/util"
 	"testing"
 )
 
@@ -74,7 +75,7 @@ func TestParseFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			node, err := ParseFilter(tt.filter)
+			node, err := util.ParseFilter(tt.filter)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseFilter() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -178,12 +179,12 @@ func TestMatchFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			node, err := ParseFilter(tt.filter)
+			node, err := util.ParseFilter(tt.filter)
 			if err != nil {
 				t.Fatalf("ParseFilter() error = %v", err)
 			}
 
-			got, err := MatchFilter(node, obj)
+			got, err := util.MatchFilter(node, obj)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("MatchFilter() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -253,12 +254,12 @@ func TestFilterToSQL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			node, err := ParseFilter(tt.filter)
+			node, err := util.ParseFilter(tt.filter)
 			if err != nil {
 				t.Fatalf("ParseFilter() error = %v", err)
 			}
 
-			sql, _, err := FilterToSQL(node, columnMapping)
+			sql, _, err := util.FilterToSQL(node, columnMapping)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("FilterToSQL() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -295,7 +296,7 @@ func TestValidateFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateFilter(tt.filter)
+			err := util.ValidateFilter(tt.filter)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateFilter() error = %v, wantErr %v", err, tt.wantErr)
 			}

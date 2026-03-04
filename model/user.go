@@ -1,20 +1,62 @@
 package model
 
-import "time"
+import (
+	"database/sql/driver"
+	"encoding/json"
+	"time"
+)
+
+// StringList 用于存储 JSON 数组的自定义类型
+type StringList []string
+
+// Value 实现 driver.Valuer 接口
+func (s StringList) Value() (driver.Value, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return json.Marshal(s)
+}
+
+// Scan 实现 sql.Scanner 接口
+func (s *StringList) Scan(value interface{}) error {
+	if value == nil {
+		*s = nil
+		return nil
+	}
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return nil
+	}
+	return json.Unmarshal(bytes, s)
+}
 
 // User SCIM 2.0标准用户模型（RFC 7644）
 type User struct {
-	ID          string   `json:"id" gorm:"primaryKey;type:varchar(64)"`
-	Schemas     []string `json:"schemas" gorm:"-"`
-	ExternalID  string   `json:"externalId,omitempty" gorm:"type:varchar(64);index"`
-	UserName    string   `json:"userName" gorm:"type:varchar(64);uniqueIndex;not null"`
-	Active      bool     `json:"active" gorm:"default:true"`
-	DisplayName string   `json:"displayName,omitempty" gorm:"type:varchar(128)"`
-	NickName    string   `json:"nickName,omitempty" gorm:"type:varchar(64)"`
-	ProfileUrl  string   `json:"profileUrl,omitempty" gorm:"type:varchar(255)"`
+	ID          string     `json:"id" gorm:"primaryKey;type:varchar(64)"`
+	Schemas     StringList `json:"schemas" gorm:"type:json;serializer:json"` // 存储SCIM schemas，包括自定义schemas
+	ExternalID  string     `json:"externalId,omitempty" gorm:"type:varchar(64);index"`
+	UserName    string     `json:"userName" gorm:"type:varchar(64);uniqueIndex;not null"`
+	Active      bool       `json:"active" gorm:"default:true"`
+	DisplayName string     `json:"displayName,omitempty" gorm:"type:varchar(128)"`
+	NickName    string     `json:"nickName,omitempty" gorm:"type:varchar(64)"`
+	ProfileUrl  string     `json:"profileUrl,omitempty" gorm:"type:varchar(255)"`
+	Password    string     `json:"password,omitempty" gorm:"type:varchar(255);-"` // 密码，非必填，默认不返回
+	Meta        Meta       `json:"meta,omitempty" gorm:"-"`                       // ResourceType由Meta.ResourceType动态生成，不持久化
+
+	// SCIM Meta 数据字段（数据库存储）
+	// ResourceType 不持久化，由API层根据资源类型动态生成
+	CreatedAt time.Time `json:"-" gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt time.Time `json:"-" gorm:"column:updated_at;autoUpdateTime"`
+	Version   string    `json:"-" gorm:"column:version;type:varchar(64)"`
 
 	// 姓名信息（嵌套）
 	Name struct {
+		Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 		GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 		FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 		MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`

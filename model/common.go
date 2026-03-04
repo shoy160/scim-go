@@ -20,6 +20,16 @@ var (
 	ErrUnauthorized = errors.New("unauthorized")
 	// ErrBadRequest 错误请求错误
 	ErrBadRequest = errors.New("bad request")
+	// ErrUserAlreadyInGroup 用户已在组中错误
+	// 用于在 AddUserToGroup 操作中检测重复添加用户的情况
+	// 修复日期: 2025-03-03
+	// 修复原因: 统一错误类型，使 API 层能够正确识别并返回 409 Conflict 状态码
+	ErrUserAlreadyInGroup = errors.New("user already in group")
+	// ErrUserNotInGroup 用户不在组中错误
+	// 用于在 RemoveUserFromGroup 操作中检测用户不在组中的情况
+	// 修复日期: 2025-03-03
+	// 修复原因: 统一错误类型，使 API 层能够正确识别并返回 404 Not Found 状态码
+	ErrUserNotInGroup = errors.New("user not in group")
 )
 
 // SCIMSchema 定义SCIM标准Schema常量

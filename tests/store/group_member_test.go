@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"scim-go/model"
+	"scim-go/store"
 )
 
 func TestMemoryStore_AddUserToGroup(t *testing.T) {
-	store := NewMemory()
+	store := store.NewMemory()
 
 	// 创建测试用户
 	user1 := &model.User{
@@ -75,8 +76,8 @@ func TestMemoryStore_AddUserToGroup(t *testing.T) {
 		if err == nil {
 			t.Error("Should return error for duplicate user")
 		}
-		if err.Error() != "user already in group" {
-			t.Errorf("Expected 'user already in group' error, got %v", err)
+		if err != model.ErrUserAlreadyInGroup {
+			t.Errorf("Expected ErrUserAlreadyInGroup, got %v", err)
 		}
 	})
 
@@ -98,7 +99,7 @@ func TestMemoryStore_AddUserToGroup(t *testing.T) {
 }
 
 func TestMemoryStore_RemoveUserFromGroup(t *testing.T) {
-	store := NewMemory()
+	store := store.NewMemory()
 
 	// 创建测试数据
 	user1 := &model.User{
@@ -158,8 +159,8 @@ func TestMemoryStore_RemoveUserFromGroup(t *testing.T) {
 		if err == nil {
 			t.Error("Should return error for non-existent user")
 		}
-		if err.Error() != "user not in group" {
-			t.Errorf("Expected 'user not in group' error, got %v", err)
+		if err != model.ErrUserNotInGroup {
+			t.Errorf("Expected ErrUserNotInGroup, got %v", err)
 		}
 	})
 
@@ -173,7 +174,7 @@ func TestMemoryStore_RemoveUserFromGroup(t *testing.T) {
 }
 
 func TestMemoryStore_IsUserInGroup(t *testing.T) {
-	store := NewMemory()
+	store := store.NewMemory()
 
 	// 创建测试数据
 	user := &model.User{
@@ -225,7 +226,7 @@ func TestMemoryStore_IsUserInGroup(t *testing.T) {
 }
 
 func TestMemoryStore_CreateGroupWithMembers(t *testing.T) {
-	store := NewMemory()
+	store := store.NewMemory()
 
 	// 创建测试用户
 	user1 := &model.User{
@@ -274,7 +275,7 @@ func TestMemoryStore_CreateGroupWithMembers(t *testing.T) {
 }
 
 func TestMemoryStore_GroupMemberIntegrity(t *testing.T) {
-	store := NewMemory()
+	store := store.NewMemory()
 
 	// 创建测试数据
 	user1 := &model.User{

@@ -59,6 +59,18 @@ func BindQuery() gin.HandlerFunc {
 			q.ExcludedAttributes = normalizeAttributeParam(q.ExcludedAttributes)
 		}
 
+		// 验证查询参数
+		if err := q.Validate(); err != nil {
+			c.JSON(http.StatusBadRequest, model.ErrorResponse{
+				Schemas:  model.ErrorSchema.String(),
+				Detail:   "Invalid query parameters: " + err.Error(),
+				Status:   http.StatusBadRequest,
+				ScimType: "invalidValue",
+			})
+			c.Abort()
+			return
+		}
+
 		c.Set("scim_query", &q)
 		c.Next()
 	}

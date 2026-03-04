@@ -7,25 +7,30 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MemoryStore 内存存储实现
 // 优化：添加用户名索引以提升查询性能
 type MemoryStore struct {
-	users       map[string]*model.User
-	groups      map[string]*model.Group
-	userNameIdx map[string]string // 用户名 -> 用户ID 索引
-	groupNameIdx map[string]string // 组名 -> 组ID 索引
-	mu          sync.RWMutex      // 读写锁，保证并发安全
+	users           map[string]*model.User
+	groups          map[string]*model.Group
+	userNameIdx     map[string]string                               // 用户名 -> 用户ID 索引
+	groupNameIdx    map[string]string                               // 组名 -> 组ID 索引
+	userTimestamps  map[string]struct{ CreatedAt, UpdatedAt int64 } // 用户时间戳
+	groupTimestamps map[string]struct{ CreatedAt, UpdatedAt int64 } // 组时间戳
+	mu              sync.RWMutex                                    // 读写锁，保证并发安全
 }
 
 // NewMemory 创建内存存储实例
 func NewMemory() Store {
 	return &MemoryStore{
-		users:        make(map[string]*model.User),
-		groups:       make(map[string]*model.Group),
-		userNameIdx:  make(map[string]string),
-		groupNameIdx: make(map[string]string),
+		users:           make(map[string]*model.User),
+		groups:          make(map[string]*model.Group),
+		userNameIdx:     make(map[string]string),
+		groupNameIdx:    make(map[string]string),
+		userTimestamps:  make(map[string]struct{ CreatedAt, UpdatedAt int64 }),
+		groupTimestamps: make(map[string]struct{ CreatedAt, UpdatedAt int64 }),
 	}
 }
 
@@ -41,6 +46,36 @@ func (m *MemoryStore) CreateUser(u *model.User) error {
 	lowerUserName := strings.ToLower(u.UserName)
 	if _, exists := m.userNameIdx[lowerUserName]; exists {
 		return model.ErrUniqueness
+	}
+
+	// 记录时间戳
+	now := time.Now()
+	timestamp := struct{ CreatedAt, UpdatedAt int64 }{now.Unix(), now.Unix()}
+	m.userTimestamps[u.ID] = timestamp
+
+	// 生成 meta 属性
+	createdAt := time.Unix(timestamp.CreatedAt, 0)
+	updatedAt := time.Unix(timestamp.UpdatedAt, 0)
+	created := createdAt.Format(time.RFC3339Nano)
+	lastModified := updatedAt.Format(time.RFC3339Nano)
+	version := util.GenerateVersion()
+
+	u.Meta = model.Meta{
+		ResourceType: "User",
+		Created:      created,
+		LastModified: lastModified,
+		Location:     "", // 由API层动态生成
+		Version:      version,
+	}
+
+	// 设置数据库存储的 meta 字段（ResourceType 不持久化，由API层动态生成）
+	u.CreatedAt = createdAt
+	u.UpdatedAt = updatedAt
+	u.Version = version
+
+	// 设置默认 schemas（如果未提供）
+	if len(u.Schemas) == 0 {
+		u.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:User"}
 	}
 
 	m.users[u.ID] = u
@@ -117,7 +152,50 @@ func (m *MemoryStore) UpdateUser(u *model.User) error {
 		m.userNameIdx[lowerUserName] = u.ID
 	}
 
-	m.users[u.ID] = u
+	// 更新时间戳和 meta 属性
+	now := time.Now()
+	if timestamp, exists := m.userTimestamps[u.ID]; exists {
+		timestamp.UpdatedAt = now.Unix()
+		m.userTimestamps[u.ID] = timestamp
+	} else {
+		// 如果 timestamp 不存在，创建新的
+		timestamp = struct{ CreatedAt, UpdatedAt int64 }{
+			CreatedAt: now.Unix(),
+			UpdatedAt: now.Unix(),
+		}
+		m.userTimestamps[u.ID] = timestamp
+	}
+
+	// 更新 meta 属性（在现有对象上）
+	existing.Meta.LastModified = now.Format(time.RFC3339Nano)
+	existing.Meta.Version = util.GenerateVersion()
+	// Location 由API层动态生成
+
+	// 更新数据库存储的 meta 字段
+	existing.UpdatedAt = now
+	existing.Version = existing.Meta.Version
+
+	// 从请求体复制字段到现有对象
+	existing.UserName = u.UserName
+	existing.Name = u.Name
+	existing.Active = u.Active
+	existing.DisplayName = u.DisplayName
+	existing.NickName = u.NickName
+	existing.ProfileUrl = u.ProfileUrl
+	existing.Emails = u.Emails
+	existing.Roles = u.Roles
+	// 更新 schemas（支持自定义 schemas）
+	if len(u.Schemas) > 0 {
+		existing.Schemas = u.Schemas
+	}
+
+	// ResourceType 不持久化，由API层动态生成
+	// 保留原有的 CreatedAt
+	if !existing.CreatedAt.IsZero() {
+		// 已在 CreateUser 中设置
+	}
+
+	m.users[u.ID] = existing
 	return nil
 }
 
@@ -144,6 +222,18 @@ func (m *MemoryStore) PatchUser(id string, ops []model.PatchOperation) error {
 		m.userNameIdx[newUserName] = id
 	}
 
+	// 更新时间戳和 meta 属性
+	if timestamp, exists := m.userTimestamps[id]; exists {
+		now := time.Now()
+		timestamp.UpdatedAt = now.Unix()
+		m.userTimestamps[id] = timestamp
+
+		// 更新 meta 属性
+		u.Meta.LastModified = now.Format(time.RFC3339)
+		u.Meta.Version = util.GenerateVersion()
+		// Location 由API层动态生成
+	}
+
 	return nil
 }
 
@@ -158,8 +248,9 @@ func (m *MemoryStore) DeleteUser(id string) error {
 		return model.ErrNotFound
 	}
 
-	// 清理索引
+	// 清理索引和时间戳
 	delete(m.userNameIdx, strings.ToLower(u.UserName))
+	delete(m.userTimestamps, id)
 	delete(m.users, id)
 	return nil
 }
@@ -183,6 +274,36 @@ func (m *MemoryStore) CreateGroup(g *model.Group) error {
 		if _, exists := m.users[member.Value]; !exists {
 			return model.ErrNotFound
 		}
+	}
+
+	// 记录时间戳
+	now := time.Now()
+	timestamp := struct{ CreatedAt, UpdatedAt int64 }{now.Unix(), now.Unix()}
+	m.groupTimestamps[g.ID] = timestamp
+
+	// 生成 meta 属性
+	createdAt := time.Unix(timestamp.CreatedAt, 0)
+	updatedAt := time.Unix(timestamp.UpdatedAt, 0)
+	created := createdAt.Format(time.RFC3339Nano)
+	lastModified := updatedAt.Format(time.RFC3339Nano)
+	version := util.GenerateVersion()
+
+	g.Meta = model.Meta{
+		ResourceType: "Group",
+		Created:      created,
+		LastModified: lastModified,
+		Location:     "", // 由API层动态生成
+		Version:      version,
+	}
+
+	// 设置数据库存储的 meta 字段（ResourceType 不持久化，由API层动态生成）
+	g.CreatedAt = createdAt
+	g.UpdatedAt = updatedAt
+	g.Version = version
+
+	// 设置默认 schemas（如果未提供）
+	if len(g.Schemas) == 0 {
+		g.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:Group"}
 	}
 
 	m.groups[g.ID] = g
@@ -258,7 +379,44 @@ func (m *MemoryStore) UpdateGroup(g *model.Group) error {
 		m.groupNameIdx[lowerGroupName] = g.ID
 	}
 
-	m.groups[g.ID] = g
+	// 更新时间戳和 meta 属性
+	now := time.Now()
+	if timestamp, exists := m.groupTimestamps[g.ID]; exists {
+		timestamp.UpdatedAt = now.Unix()
+		m.groupTimestamps[g.ID] = timestamp
+	} else {
+		// 如果 timestamp 不存在，创建新的
+		timestamp = struct{ CreatedAt, UpdatedAt int64 }{
+			CreatedAt: now.Unix(),
+			UpdatedAt: now.Unix(),
+		}
+		m.groupTimestamps[g.ID] = timestamp
+	}
+
+	// 更新 meta 属性（在现有对象上）
+	existing.Meta.LastModified = now.Format(time.RFC3339Nano)
+	existing.Meta.Version = util.GenerateVersion()
+	// Location 由API层动态生成
+
+	// 更新数据库存储的 meta 字段
+	existing.UpdatedAt = now
+	existing.Version = existing.Meta.Version
+
+	// 从请求体复制字段到现有对象
+	existing.DisplayName = g.DisplayName
+	existing.Members = g.Members
+	// 更新 schemas（支持自定义 schemas）
+	if len(g.Schemas) > 0 {
+		existing.Schemas = g.Schemas
+	}
+
+	// ResourceType 不持久化，由API层动态生成
+	// 保留原有的 CreatedAt
+	if !existing.CreatedAt.IsZero() {
+		// 已在 CreateGroup 中设置
+	}
+
+	m.groups[g.ID] = existing
 	return nil
 }
 
@@ -285,6 +443,18 @@ func (m *MemoryStore) PatchGroup(id string, ops []model.PatchOperation) error {
 		m.groupNameIdx[newGroupName] = id
 	}
 
+	// 更新时间戳和 meta 属性
+	if timestamp, exists := m.groupTimestamps[id]; exists {
+		now := time.Now()
+		timestamp.UpdatedAt = now.Unix()
+		m.groupTimestamps[id] = timestamp
+
+		// 更新 meta 属性
+		g.Meta.LastModified = now.Format(time.RFC3339)
+		g.Meta.Version = util.GenerateVersion()
+		// Location 由API层动态生成
+	}
+
 	return nil
 }
 
@@ -299,17 +469,18 @@ func (m *MemoryStore) DeleteGroup(id string) error {
 		return model.ErrNotFound
 	}
 
-	// 清理索引
+	// 清理索引和时间戳
 	delete(m.groupNameIdx, strings.ToLower(g.DisplayName))
+	delete(m.groupTimestamps, id)
 	delete(m.groups, id)
 	return nil
 }
 
 // ---------------------- Group 成员管理 ----------------------
 
-// AddUserToGroup 添加用户到组
+// AddMemberToGroup 添加成员到组（支持用户和组）
 // 优化：使用 map 检查成员是否存在，时间复杂度从 O(n) 降低到 O(1)
-func (m *MemoryStore) AddUserToGroup(groupID, userID string) error {
+func (m *MemoryStore) AddMemberToGroup(groupID, memberID, memberType string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -319,33 +490,47 @@ func (m *MemoryStore) AddUserToGroup(groupID, userID string) error {
 		return model.ErrNotFound
 	}
 
-	// 验证用户是否存在
-	if _, ok := m.users[userID]; !ok {
-		return model.ErrNotFound
+	// 验证成员是否存在
+	if memberType == "User" {
+		if _, ok := m.users[memberID]; !ok {
+			return model.ErrNotFound
+		}
+	} else if memberType == "Group" {
+		if _, ok := m.groups[memberID]; !ok {
+			return model.ErrNotFound
+		}
+	} else {
+		return model.ErrInvalidValue
 	}
 
-	// 检查用户是否已在组中（使用 map 优化）
+	// 检查成员是否已在组中（使用 map 优化）
 	memberMap := make(map[string]bool)
 	for _, member := range group.Members {
 		memberMap[member.Value] = true
 	}
-	if memberMap[userID] {
-		return model.ErrUniqueness
+	if memberMap[memberID] {
+		return model.ErrUserAlreadyInGroup
 	}
 
 	// 添加成员
 	group.Members = append(group.Members, model.Member{
 		GroupID: groupID,
-		Value:   userID,
+		Value:   memberID,
+		Type:    memberType,
 	})
 
 	m.groups[groupID] = group
 	return nil
 }
 
-// RemoveUserFromGroup 从组中移除用户
+// AddUserToGroup 添加用户到组
+func (m *MemoryStore) AddUserToGroup(groupID, userID string) error {
+	return m.AddMemberToGroup(groupID, userID, "User")
+}
+
+// RemoveMemberFromGroup 从组中移除成员（支持用户和组）
 // 优化：使用切片过滤，避免多次内存分配
-func (m *MemoryStore) RemoveUserFromGroup(groupID, userID string) error {
+func (m *MemoryStore) RemoveMemberFromGroup(groupID, memberID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -359,7 +544,7 @@ func (m *MemoryStore) RemoveUserFromGroup(groupID, userID string) error {
 	found := false
 	newMembers := make([]model.Member, 0, len(group.Members))
 	for _, member := range group.Members {
-		if member.Value == userID {
+		if member.Value == memberID {
 			found = true
 		} else {
 			newMembers = append(newMembers, member)
@@ -367,12 +552,17 @@ func (m *MemoryStore) RemoveUserFromGroup(groupID, userID string) error {
 	}
 
 	if !found {
-		return model.ErrNotFound
+		return model.ErrUserNotInGroup
 	}
 
 	group.Members = newMembers
 	m.groups[groupID] = group
 	return nil
+}
+
+// RemoveUserFromGroup 从组中移除用户
+func (m *MemoryStore) RemoveUserFromGroup(groupID, userID string) error {
+	return m.RemoveMemberFromGroup(groupID, userID)
 }
 
 // IsUserInGroup 检查用户是否在组中
@@ -416,6 +606,42 @@ func (m *MemoryStore) GetUserGroups(userID string) ([]model.UserGroup, error) {
 	}
 
 	return groups, nil
+}
+
+// RemoveEmailFromUser 从用户中移除指定邮箱
+// 注意：此方法不在 PatchUser 的锁外层调用，因此不需要再次加锁
+func (m *MemoryStore) RemoveEmailFromUser(userID, emailValue string) error {
+	u, ok := m.users[userID]
+	if !ok {
+		return model.ErrNotFound
+	}
+
+	for i, email := range u.Emails {
+		if strings.EqualFold(email.Value, emailValue) {
+			u.Emails = append(u.Emails[:i], u.Emails[i+1:]...)
+			return nil
+		}
+	}
+	// 如果在内存中找不到，直接返回 nil（可能已经被 handleRemoveEmails 移除了）
+	return nil
+}
+
+// RemoveRoleFromUser 从用户中移除指定角色
+// 注意：此方法不在 PatchUser 的锁外层调用，因此不需要再次加锁
+func (m *MemoryStore) RemoveRoleFromUser(userID, roleValue string) error {
+	u, ok := m.users[userID]
+	if !ok {
+		return model.ErrNotFound
+	}
+
+	for i, role := range u.Roles {
+		if strings.EqualFold(role.Value, roleValue) {
+			u.Roles = append(u.Roles[:i], u.Roles[i+1:]...)
+			return nil
+		}
+	}
+	// 如果在内存中找不到，直接返回 nil（可能已经被 handleRemoveRoles 移除了）
+	return nil
 }
 
 // ---------------------- 辅助方法 ----------------------

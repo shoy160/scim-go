@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"scim-go/api"
 	"scim-go/model"
 	"scim-go/store"
 
@@ -18,7 +19,7 @@ func setupTestRouter() (*gin.Engine, store.Store) {
 	r := gin.New()
 	s := store.NewMemory()
 
-	cfg := &ScimConfig{
+	cfg := &api.ScimConfig{
 		DefaultSchema: model.UserSchema.String(),
 		GroupSchema:   model.GroupSchema.String(),
 		ErrorSchema:   model.ErrorSchema.String(),
@@ -27,7 +28,7 @@ func setupTestRouter() (*gin.Engine, store.Store) {
 		MaxCount:      100,
 	}
 
-	RegisterRoutes(r, s, cfg, "test-token", true, "/swagger")
+	api.RegisterRoutes(r, s, cfg, "test-token", true, "/swagger")
 	return r, s
 }
 
@@ -38,6 +39,7 @@ func TestUserHandlers(t *testing.T) {
 		user := model.User{
 			UserName: "john.doe",
 			Name: struct {
+				Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 				GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 				FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 				MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
@@ -93,6 +95,7 @@ func TestUserHandlers(t *testing.T) {
 		user := model.User{
 			UserName: "jane.doe",
 			Name: struct {
+				Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 				GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 				FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 				MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
@@ -163,6 +166,7 @@ func TestUserHandlers(t *testing.T) {
 		user := model.User{
 			UserName: "delete.me",
 			Name: struct {
+				Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 				GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 				FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 				MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
@@ -423,6 +427,7 @@ func TestGroupMemberManagement(t *testing.T) {
 	user1 := model.User{
 		UserName: "alice",
 		Name: struct {
+			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
@@ -436,6 +441,7 @@ func TestGroupMemberManagement(t *testing.T) {
 	user2 := model.User{
 		UserName: "bob",
 		Name: struct {
+			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
@@ -672,6 +678,7 @@ func TestUserAttributesGroups(t *testing.T) {
 	user1 := model.User{
 		UserName: "alice",
 		Name: struct {
+			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
@@ -685,6 +692,7 @@ func TestUserAttributesGroups(t *testing.T) {
 	user2 := model.User{
 		UserName: "bob",
 		Name: struct {
+			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
@@ -837,6 +845,7 @@ func TestGroupAttributesMembers(t *testing.T) {
 	user1 := model.User{
 		UserName: "alice",
 		Name: struct {
+			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
@@ -850,6 +859,7 @@ func TestGroupAttributesMembers(t *testing.T) {
 	user2 := model.User{
 		UserName: "bob",
 		Name: struct {
+			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
 			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
 			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`

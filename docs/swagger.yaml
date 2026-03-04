@@ -13,12 +13,16 @@ definitions:
   model.ErrorResponse:
     properties:
       detail:
+        description: Detail 错误详情
         type: string
       schemas:
+        description: Schemas SCIM错误Schema
         type: string
       scimType:
+        description: ScimType SCIM错误类型
         type: string
       status:
+        description: Status HTTP状态码
         type: integer
     type: object
   model.Group:
@@ -34,58 +38,89 @@ definitions:
         items:
           $ref: '#/definitions/model.Member'
         type: array
+      meta:
+        allOf:
+        - $ref: '#/definitions/model.Meta'
+        description: ResourceType由Meta.ResourceType动态生成，不持久化
       schemas:
+        description: 存储SCIM schemas，包括自定义schemas
         items:
           type: string
         type: array
     type: object
   model.ListResponse:
     properties:
-      Resources: {}
+      Resources:
+        description: Resources 资源列表
       itemsPerPage:
+        description: ItemsPerPage 每页项目数
         type: integer
       schemas:
+        description: Schemas SCIM Schema标识符数组
         items:
           type: string
         type: array
       startIndex:
+        description: StartIndex 起始索引（从1开始）
         type: integer
       totalResults:
+        description: TotalResults 总结果数量
         type: integer
     type: object
   model.Member:
     properties:
+      $ref:
+        description: 成员引用URI（动态生成）
+        type: string
       display:
-        description: 用户名
+        description: 成员显示名称
+        type: string
+      type:
+        description: 成员类型（User或Group）
         type: string
       value:
-        description: 用户ID
+        description: 成员ID（用户或组）
+        type: string
+    type: object
+  model.Meta:
+    properties:
+      created:
+        type: string
+      lastModified:
+        type: string
+      location:
+        type: string
+      resourceType:
+        type: string
+      version:
         type: string
     type: object
   model.PatchOperation:
     properties:
       op:
-        description: 操作类型
+        description: Op 操作类型，必须是 add/remove/replace 之一
         enum:
         - add
         - remove
         - replace
         type: string
       path:
-        description: 属性路径：如name.givenName/emails[0].value
+        description: Path 属性路径，如 name.givenName 或 emails[0].value
         type: string
       value:
-        description: 操作值
+        description: Value 操作值
     required:
     - op
     type: object
   model.PatchRequest:
     properties:
       Operations:
+        description: Operations 补丁操作列表
         items:
           $ref: '#/definitions/model.PatchOperation'
         type: array
       schemas:
+        description: Schemas SCIM Schema标识符数组
         items:
           type: string
         type: array
@@ -125,10 +160,16 @@ definitions:
         type: array
       id:
         type: string
+      meta:
+        allOf:
+        - $ref: '#/definitions/model.Meta'
+        description: ResourceType由Meta.ResourceType动态生成，不持久化
       name:
         description: 姓名信息（嵌套）
         properties:
           familyName:
+            type: string
+          formatted:
             type: string
           givenName:
             type: string
@@ -136,6 +177,9 @@ definitions:
             type: string
         type: object
       nickName:
+        type: string
+      password:
+        description: 密码，非必填，默认不返回
         type: string
       profileUrl:
         type: string
@@ -145,6 +189,7 @@ definitions:
           $ref: '#/definitions/model.Role'
         type: array
       schemas:
+        description: 存储SCIM schemas，包括自定义schemas
         items:
           type: string
         type: array
@@ -163,9 +208,8 @@ definitions:
 host: localhost:8080
 info:
   contact:
-    email: support@example.com
-    name: API Support
-    url: https://example.com/support
+    email: shoy160@qq.com
+    name: shoy160
   description: SCIM (System for Cross-domain Identity Management) 2.0 实现，提供用户和组管理功能
   license:
     name: Apache 2.0
@@ -229,7 +273,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 创建新组，可以包含成员
+      description: 创建新组，需要提供组显示名称
       parameters:
       - description: 组信息
         in: body
@@ -439,17 +483,17 @@ paths:
         name: id
         required: true
         type: string
-      - description: 用户ID
+      - description: 成员信息
         in: body
-        name: request
+        name: member
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/model.Member'
       produces:
       - application/json
       responses:
-        "200":
-          description: 添加成功，返回更新后的组信息
+        "201":
+          description: 添加成功
           schema:
             $ref: '#/definitions/model.Group'
         "400":
@@ -462,10 +506,6 @@ paths:
             $ref: '#/definitions/model.ErrorResponse'
         "404":
           description: 组或用户不存在
-          schema:
-            $ref: '#/definitions/model.ErrorResponse'
-        "409":
-          description: 用户已在组中
           schema:
             $ref: '#/definitions/model.ErrorResponse'
         "500":

@@ -7,13 +7,16 @@ token: "aGCIhV2JtgAezYduMpE1rK6Omy"
 # 日志级别：debug/info/warn/error
 log_level: info
 
-# 存储配置：memory/redis/mysql/postgres
+# 存储配置：memory/redis/mysql/postgres/authing
 storage:
-  # driver: memory
-  driver: mysql
+  driver: postgres
   # redis_uri: "redis://redis:6379/0"
-  mysql_dsn: "root:a123456@tcp(authing.cd:13306)/db_scim?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s"
-  # postgres_dsn: "host=postgres user=postgres password=postgres dbname=scim port=5432 sslmode=disable connect_timeout=5"
+  # mysql_dsn: "root:a123456@tcp(localhost:13306)/db_scim?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s"
+  postgres_dsn: "host=authing.cd user=postgres password=a123456 dbname=db_scim port=15432 sslmode=disable connect_timeout=5"
+  # authing_api_key: "your-authing-api-key"
+  # authing_app_id: "your-authing-app-id"
+  # authing_auth_url: "https://api.authing.cn"
+  # authing_api_url: "https://api.authing.cn/v3"
 
 # 分页配置（SCIM标准）
 pagination:

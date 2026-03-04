@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"scim-go/model"
+	"scim-go/store"
 )
 
 func TestMemoryStore_GetUserGroups(t *testing.T) {
-	store := NewMemory()
+	store := store.NewMemory()
 
 	// 创建测试用户
 	user1 := &model.User{
@@ -121,7 +122,7 @@ func TestMemoryStore_GetUserGroups(t *testing.T) {
 }
 
 func TestMemoryStore_GetUserGroupsAfterRemoval(t *testing.T) {
-	store := NewMemory()
+	store := store.NewMemory()
 
 	// 创建测试数据
 	user := &model.User{

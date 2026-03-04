@@ -18,10 +18,14 @@ type Config struct {
 	LogLevel string `yaml:"log_level"`
 
 	Storage struct {
-		Driver      string `yaml:"driver"`
-		RedisURI    string `yaml:"redis_uri"`
-		MySQLDSN    string `yaml:"mysql_dsn"`
-		PostgresDSN string `yaml:"postgres_dsn"`
+		Driver              string `yaml:"driver"`
+		RedisURI            string `yaml:"redis_uri"`
+		MySQLDSN            string `yaml:"mysql_dsn"`
+		PostgresDSN         string `yaml:"postgres_dsn"`
+		AuthingHost         string `yaml:"authing_host"`
+		AuthingUserPoolID   string `yaml:"authing_user_pool_id"`
+		AuthingAccessKey    string `yaml:"authing_access_key"`
+		AuthingAccessSecret string `yaml:"authing_access_secret"`
 	} `yaml:"storage"`
 
 	Pagination struct {
@@ -38,8 +42,8 @@ type Config struct {
 	} `yaml:"scim"`
 
 	Swagger struct {
-		Enabled  bool   `yaml:"enabled"`
-		Path     string `yaml:"path"`
+		Enabled bool   `yaml:"enabled"`
+		Path    string `yaml:"path"`
 	} `yaml:"swagger"`
 }
 
@@ -171,10 +175,14 @@ func LoadConfig(path string) (Config, bool) {
 	globalCfg.LogLevel = cm.GetString("LOG_LEVEL", globalCfg.LogLevel)
 
 	// 存储配置
-	globalCfg.Storage.Driver = cm.GetStringWithOptions("STORAGE_DRIVER", globalCfg.Storage.Driver, []string{"memory", "redis", "mysql", "postgres"})
+	globalCfg.Storage.Driver = cm.GetStringWithOptions("STORAGE_DRIVER", globalCfg.Storage.Driver, []string{"memory", "redis", "mysql", "postgres", "authing"})
 	globalCfg.Storage.RedisURI = cm.GetString("STORAGE_REDIS_URI", globalCfg.Storage.RedisURI)
 	globalCfg.Storage.MySQLDSN = cm.GetString("STORAGE_MYSQL_DSN", globalCfg.Storage.MySQLDSN)
 	globalCfg.Storage.PostgresDSN = cm.GetString("STORAGE_POSTGRES_DSN", globalCfg.Storage.PostgresDSN)
+	globalCfg.Storage.AuthingHost = cm.GetString("STORAGE_AUTHING_HOST", globalCfg.Storage.AuthingHost)
+	globalCfg.Storage.AuthingUserPoolID = cm.GetString("STORAGE_AUTHING_USER_POOL_ID", globalCfg.Storage.AuthingUserPoolID)
+	globalCfg.Storage.AuthingAccessKey = cm.GetString("STORAGE_AUTHING_ACCESS_KEY", globalCfg.Storage.AuthingAccessKey)
+	globalCfg.Storage.AuthingAccessSecret = cm.GetString("STORAGE_AUTHING_ACCESS_SECRET", globalCfg.Storage.AuthingAccessSecret)
 
 	// 分页配置
 	globalCfg.Pagination.DefaultCount = cm.GetInt("PAGINATION_DEFAULT_COUNT", globalCfg.Pagination.DefaultCount)
@@ -201,6 +209,10 @@ func LoadConfig(path string) (Config, bool) {
 		log.Printf("Storage Redis URI: %s\n", globalCfg.Storage.RedisURI)
 		log.Printf("Storage MySQL DSN: %s\n", globalCfg.Storage.MySQLDSN)
 		log.Printf("Storage Postgres DSN: %s\n", globalCfg.Storage.PostgresDSN)
+		log.Printf("Storage Authing Host: %s\n", globalCfg.Storage.AuthingHost)
+		log.Printf("Storage Authing User Pool ID: %s\n", globalCfg.Storage.AuthingUserPoolID)
+		log.Printf("Storage Authing Access Key: %s\n", globalCfg.Storage.AuthingAccessKey)
+		log.Printf("Storage Authing Access Secret: %s\n", globalCfg.Storage.AuthingAccessSecret)
 		log.Printf("Pagination Default Count: %d\n", globalCfg.Pagination.DefaultCount)
 		log.Printf("Pagination Max Count: %d\n", globalCfg.Pagination.MaxCount)
 		log.Printf("Pagination Cursor Support: %t\n", globalCfg.Pagination.CursorSupport)

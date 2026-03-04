@@ -412,6 +412,19 @@ docker compose --profile postgres up -d
 # 密码：postgres
 ```
 
+**Authing 存储**
+```bash
+# 编辑 .env 文件，设置 STORAGE_DRIVER=authing
+# 并配置 Authing API 信息：
+# STORAGE_AUTHING_API_KEY=your-authing-api-key
+# STORAGE_AUTHING_APP_ID=your-authing-app-id
+
+# 启动 SCIM 服务（不需要额外的存储服务）
+docker compose up -d
+
+# 注意：需要在 Authing 控制台获取真实的 API Key 和 App ID
+```
+
 **启动所有服务（完整环境）**
 ```bash
 # 启动所有存储服务和 SCIM 服务

@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"scim-go/api"
-	"scim-go/config"
+	"scim-go/internal/config"
 	"scim-go/store"
 
 	"github.com/gin-gonic/gin"
@@ -52,6 +52,68 @@ func LowerCasePath() gin.HandlerFunc {
 	}
 }
 
+// initStorage 初始化存储
+func initStorage(cfg config.Config) store.Store {
+	switch cfg.Storage.Driver {
+	case "redis":
+		s := store.NewRedis(cfg.Storage.RedisURI)
+		log.Println("storage driver: redis")
+		return s
+	case "mysql":
+		s := initMySQL(cfg)
+		log.Println("storage driver: mysql")
+		return s
+	case "postgres":
+		s := initPostgres(cfg)
+		log.Println("storage driver: postgres")
+		return s
+	case "authing":
+		s := store.NewAuthingStore(
+			cfg.Storage.AuthingHost,
+			cfg.Storage.AuthingUserPoolID,
+			cfg.Storage.AuthingAccessKey,
+			cfg.Storage.AuthingAccessSecret,
+		)
+		log.Println("storage driver: authing")
+		return s
+	default:
+		s := store.NewMemory()
+		log.Println("storage driver: memory (default)")
+		return s
+	}
+}
+
+// initMySQL 初始化MySQL连接
+func initMySQL(cfg config.Config) store.Store {
+	// 配置Gorm日志
+	gormLogger := logger.Default
+	if cfg.Mode == gin.ReleaseMode {
+		gormLogger = gormLogger.LogMode(logger.Error)
+	}
+	db, err := gorm.Open(mysql.Open(cfg.Storage.MySQLDSN), &gorm.Config{
+		Logger: gormLogger,
+	})
+	if err != nil {
+		log.Fatalf("mysql connect failed: %s\n", err)
+	}
+	return store.NewDB(db, nil)
+}
+
+// initPostgres 初始化PostgreSQL连接
+func initPostgres(cfg config.Config) store.Store {
+	gormLogger := logger.Default
+	if cfg.Mode == gin.ReleaseMode {
+		gormLogger = gormLogger.LogMode(logger.Error)
+	}
+	db, err := gorm.Open(postgres.Open(cfg.Storage.PostgresDSN), &gorm.Config{
+		Logger: gormLogger,
+	})
+	if err != nil {
+		log.Fatalf("postgres connect failed: %s\n", err)
+	}
+	return store.NewDB(db, nil)
+}
+
 func main() {
 	// 1. 加载配置文件
 	var configTest bool
@@ -65,22 +127,9 @@ func main() {
 	r := gin.New()
 	// 加入基础中间件：日志+恢复panic
 	r.Use(LowerCasePath(), gin.Logger(), gin.Recovery())
+
 	// 3. 初始化存储
-	var s store.Store
-	switch globalCfg.Storage.Driver {
-	case "redis":
-		s = store.NewRedis(globalCfg.Storage.RedisURI)
-		log.Println("storage driver: redis")
-	case "mysql":
-		s = initMySQL()
-		log.Println("storage driver: mysql")
-	case "postgres":
-		s = initPostgres()
-		log.Println("storage driver: postgres")
-	default:
-		s = store.NewMemory()
-		log.Println("storage driver: memory (default)")
-	}
+	s := initStorage(globalCfg)
 
 	// 4. 注册SCIM接口
 	scimCfg := &api.ScimConfig{
@@ -98,6 +147,8 @@ func main() {
 		Addr:    ":" + globalCfg.Port,
 		Handler: r,
 	}
+
+	// 启动服务
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen failed: %s\n", err)
@@ -114,39 +165,9 @@ func main() {
 	// 关闭上下文（5秒超时）
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatal("server shutdown failed: ", err)
 	}
 	log.Println("server shutdown successfully")
-}
-
-// initMySQL 初始化MySQL连接
-func initMySQL() store.Store {
-	// 配置Gorm日志
-	gormLogger := logger.Default
-	if globalCfg.Mode == gin.ReleaseMode {
-		gormLogger = gormLogger.LogMode(logger.Error)
-	}
-	db, err := gorm.Open(mysql.Open(globalCfg.Storage.MySQLDSN), &gorm.Config{
-		Logger: gormLogger,
-	})
-	if err != nil {
-		log.Fatalf("mysql connect failed: %s\n", err)
-	}
-	return store.NewDB(db)
-}
-
-// initPostgres 初始化PostgreSQL连接
-func initPostgres() store.Store {
-	gormLogger := logger.Default
-	if globalCfg.Mode == gin.ReleaseMode {
-		gormLogger = gormLogger.LogMode(logger.Error)
-	}
-	db, err := gorm.Open(postgres.Open(globalCfg.Storage.PostgresDSN), &gorm.Config{
-		Logger: gormLogger,
-	})
-	if err != nil {
-		log.Fatalf("postgres connect failed: %s\n", err)
-	}
-	return store.NewDB(db)
 }

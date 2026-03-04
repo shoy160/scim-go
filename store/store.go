@@ -1,10 +1,24 @@
 package store
 
 import (
-	"log"
+	"crypto/sha1"
+	"encoding/hex"
+	"fmt"
+	"strings"
+	"time"
+
 	"scim-go/model"
 	"scim-go/util"
 )
+
+// generateVersion 生成 SCIM 版本标识符（ETag 格式）
+func generateVersion() string {
+	// 使用当前时间戳生成唯一版本标识
+	timestamp := time.Now().UnixNano()
+	hash := sha1.New()
+	hash.Write([]byte(fmt.Sprintf("%d", timestamp)))
+	return fmt.Sprintf("W/\"%s\"", hex.EncodeToString(hash.Sum(nil)))
+}
 
 // Store 存储层通用接口（所有存储实现需实现此接口）
 type Store interface {
@@ -25,14 +39,22 @@ type Store interface {
 	DeleteGroup(id string) error
 
 	// ---------------------- Group 成员管理 ----------------------
-	AddUserToGroup(groupID, userID string) error        // 添加用户到组
-	RemoveUserFromGroup(groupID, userID string) error   // 从组中移除用户
-	IsUserInGroup(groupID, userID string) (bool, error) // 检查用户是否在组中
+	AddUserToGroup(groupID, userID string) error                 // 添加用户到组
+	RemoveUserFromGroup(groupID, userID string) error            // 从组中移除用户
+	IsUserInGroup(groupID, userID string) (bool, error)          // 检查用户是否在组中
+	AddMemberToGroup(groupID, memberID, memberType string) error // 添加成员到组（支持用户和组）
+	RemoveMemberFromGroup(groupID, memberID string) error        // 从组中移除成员（支持用户和组）
 
 	// ---------------------- 反向查询 ----------------------
 	GetUserGroups(userID string) ([]model.UserGroup, error) // 获取用户所属的所有组
+
+	// ---------------------- Email/Role 管理 ----------------------
+	RemoveEmailFromUser(userID, emailValue string) error // 从用户中移除指定邮箱
+	RemoveRoleFromUser(userID, roleValue string) error   // 从用户中移除指定角色
 }
 
+// PatchResource 处理 SCIM Patch 操作
+// 支持 add/replace/remove 操作，处理成员和群组关联关系
 func PatchResource(s Store, id string, data any, ops []model.PatchOperation) error {
 	if len(ops) == 0 {
 		return nil
@@ -45,60 +67,497 @@ func PatchResource(s Store, id string, data any, ops []model.PatchOperation) err
 	if _, ok := data.(*model.User); ok {
 		isUser = true
 	}
-	log.Println("isGroup", isGroup, "isUser", isUser, data)
 
 	for _, op := range ops {
-		log.Println("op", op)
+		// 验证操作类型
+		if err := op.Validate(); err != nil {
+			return fmt.Errorf("invalid patch operation: %w", err)
+		}
+
 		switch op.Op {
 		case "add", "replace":
-			// 成员字段的处理
-			if op.Path == "members" && isGroup {
-				log.Println("members", op.Value)
-				for _, member := range op.Value.([]any) {
-					log.Println("add member", member)
-					err := s.AddUserToGroup(id, member.(map[string]any)["value"].(string))
-					if err != nil {
-						return err
-					}
-				}
-				continue
+			if err := handleAddOrReplace(s, id, data, op, isGroup, isUser); err != nil {
+				return err
 			}
-			// 群组字段的处理
-			if op.Path == "groups" && isUser {
-				for _, group := range op.Value.([]any) {
-					log.Println("add group", group)
-					err := s.AddUserToGroup(group.(map[string]any)["value"].(string), id)
-					if err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			util.SetValueByPath(data, op.Path, op.Value)
 		case "remove":
-			// 成员字段的处理
-			if op.Path == "members" && isGroup {
-				for _, member := range op.Value.([]any) {
-					log.Println("remove member", member)
-					err := s.RemoveUserFromGroup(id, member.(map[string]any)["value"].(string))
-					if err != nil {
-						return err
-					}
-				}
-				continue
+			if err := handleRemove(s, id, data, op, isGroup, isUser); err != nil {
+				return err
 			}
-			// 群组字段的处理
-			if op.Path == "groups" && isUser {
-				for _, group := range op.Value.([]any) {
-					log.Println("remove group", group)
-					err := s.RemoveUserFromGroup(group.(map[string]any)["value"].(string), id)
-					if err != nil {
-						return err
-					}
-				}
-				continue
+		default:
+			return fmt.Errorf("unsupported patch operation: %s", op.Op)
+		}
+	}
+	return nil
+}
+
+// handleAddOrReplace 处理 add 和 replace 操作
+func handleAddOrReplace(s Store, id string, data any, op model.PatchOperation, isGroup, isUser bool) error {
+	// 成员字段的处理（Group 类型）
+	if op.Path == "members" && isGroup {
+		return handleAddMembers(s, id, op.Value)
+	}
+	// 群组字段的处理（User 类型）
+	if op.Path == "groups" && isUser {
+		return handleAddGroups(s, id, op.Value)
+	}
+	// emails 字段的处理（User 类型）
+	if op.Path == "emails" && isUser {
+		if op.Op == "add" {
+			return handleAddEmails(data, op.Value)
+		}
+		return handleReplaceEmails(data, op.Value)
+	}
+	// roles 字段的处理（User 类型）
+	if op.Path == "roles" && isUser {
+		if op.Op == "add" {
+			return handleAddRoles(data, op.Value)
+		}
+		return handleReplaceRoles(data, op.Value)
+	}
+	// 通用字段处理
+	if op.Path != "" {
+		return util.SetValueByPath(data, op.Path, op.Value)
+	}
+	// 如果 Path 为空，Value 应该是一个对象，需要合并到 data 中
+	if op.Value != nil {
+		return util.MergeValue(data, op.Value)
+	}
+	return nil
+}
+
+// handleAddMembers 处理添加成员到组
+func handleAddMembers(s Store, groupID string, value any) error {
+	if value == nil {
+		return nil
+	}
+	members, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("members value must be an array")
+	}
+	for _, member := range members {
+		memberMap, ok := member.(map[string]any)
+		if !ok {
+			return fmt.Errorf("member must be an object")
+		}
+		memberIDVal, ok := memberMap["value"]
+		if !ok {
+			return fmt.Errorf("member must have a value field")
+		}
+		memberID, ok := memberIDVal.(string)
+		if !ok {
+			return fmt.Errorf("member value must be a string")
+		}
+		memberType := "User" // 默认类型
+		if t, ok := memberMap["type"]; ok {
+			if typeStr, ok := t.(string); ok {
+				memberType = typeStr
 			}
-			util.RemoveByPath(data, op.Path)
+		}
+		if err := s.AddMemberToGroup(groupID, memberID, memberType); err != nil {
+			return fmt.Errorf("failed to add member %s to group: %w", memberID, err)
+		}
+	}
+	return nil
+}
+
+// handleAddGroups 处理添加用户到组
+func handleAddGroups(s Store, userID string, value any) error {
+	if value == nil {
+		return nil
+	}
+	groups, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("groups value must be an array")
+	}
+	for _, group := range groups {
+		groupMap, ok := group.(map[string]any)
+		if !ok {
+			return fmt.Errorf("group must be an object")
+		}
+		groupIDVal, ok := groupMap["value"]
+		if !ok {
+			return fmt.Errorf("group must have a value field")
+		}
+		groupID, ok := groupIDVal.(string)
+		if !ok {
+			return fmt.Errorf("group value must be a string")
+		}
+		if err := s.AddUserToGroup(groupID, userID); err != nil {
+			return fmt.Errorf("failed to add user to group %s: %w", groupID, err)
+		}
+	}
+	return nil
+}
+
+// handleRemove 处理 remove 操作
+func handleRemove(s Store, id string, data any, op model.PatchOperation, isGroup, isUser bool) error {
+	// 成员字段的处理（Group 类型）
+	if op.Path == "members" && isGroup {
+		return handleRemoveMembers(s, id, op.Value)
+	}
+	// 群组字段的处理（User 类型）
+	if op.Path == "groups" && isUser {
+		return handleRemoveGroups(s, id, op.Value)
+	}
+	// emails 字段的处理（User 类型）
+	if op.Path == "emails" && isUser {
+		return handleRemoveEmails(s, id, data, op.Value)
+	}
+	// roles 字段的处理（User 类型）
+	if op.Path == "roles" && isUser {
+		return handleRemoveRoles(s, id, data, op.Value)
+	}
+	// 通用字段处理
+	if op.Path != "" {
+		return util.RemoveByPath(data, op.Path)
+	}
+	return nil
+}
+
+// handleRemoveMembers 处理从组中移除成员
+func handleRemoveMembers(s Store, groupID string, value any) error {
+	// SCIM Patch remove 操作可以有两种形式：
+	// 1. Path 指定具体成员路径，如 "members[value eq \"xxx\"]"
+	// 2. Value 包含要移除的成员列表
+	if value == nil {
+		return nil
+	}
+	members, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("members value must be an array")
+	}
+	for _, member := range members {
+		memberMap, ok := member.(map[string]any)
+		if !ok {
+			return fmt.Errorf("member must be an object")
+		}
+		memberIDVal, ok := memberMap["value"]
+		if !ok {
+			return fmt.Errorf("member must have a value field")
+		}
+		memberID, ok := memberIDVal.(string)
+		if !ok {
+			return fmt.Errorf("member value must be a string")
+		}
+		if err := s.RemoveMemberFromGroup(groupID, memberID); err != nil {
+			return fmt.Errorf("failed to remove member %s from group: %w", memberID, err)
+		}
+	}
+	return nil
+}
+
+// handleRemoveGroups 处理从组中移除用户
+func handleRemoveGroups(s Store, userID string, value any) error {
+	if value == nil {
+		return nil
+	}
+	groups, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("groups value must be an array")
+	}
+	for _, group := range groups {
+		groupMap, ok := group.(map[string]any)
+		if !ok {
+			return fmt.Errorf("group must be an object")
+		}
+		groupIDVal, ok := groupMap["value"]
+		if !ok {
+			return fmt.Errorf("group must have a value field")
+		}
+		groupID, ok := groupIDVal.(string)
+		if !ok {
+			return fmt.Errorf("group value must be a string")
+		}
+		if err := s.RemoveUserFromGroup(groupID, userID); err != nil {
+			return fmt.Errorf("failed to remove user from group %s: %w", groupID, err)
+		}
+	}
+	return nil
+}
+
+// handleAddEmails 处理添加 emails 到用户
+func handleAddEmails(data any, value any) error {
+	if value == nil {
+		return nil
+	}
+	emails, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("emails value must be an array")
+	}
+	user, ok := data.(*model.User)
+	if !ok {
+		return fmt.Errorf("data must be a User pointer")
+	}
+	for _, email := range emails {
+		emailMap, ok := email.(map[string]any)
+		if !ok {
+			return fmt.Errorf("email must be an object")
+		}
+		emailValueVal, ok := emailMap["value"]
+		if !ok {
+			return fmt.Errorf("email must have a value field")
+		}
+		emailValue, ok := emailValueVal.(string)
+		if !ok {
+			return fmt.Errorf("email value must be a string")
+		}
+		if err := util.ValidateEmailFormat(emailValue); err != nil {
+			return fmt.Errorf("invalid email format: %w", err)
+		}
+		emailType := "work"
+		if t, ok := emailMap["type"].(string); ok {
+			emailType = t
+		}
+		primary := false
+		if p, ok := emailMap["primary"].(bool); ok {
+			primary = p
+		}
+		user.Emails = append(user.Emails, model.Email{
+			UserID:  user.ID,
+			Value:   emailValue,
+			Type:    emailType,
+			Primary: primary,
+		})
+	}
+	return nil
+}
+
+// handleReplaceEmails 处理替换用户的 emails
+func handleReplaceEmails(data any, value any) error {
+	if value == nil {
+		return nil
+	}
+	emails, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("emails value must be an array")
+	}
+	user, ok := data.(*model.User)
+	if !ok {
+		return fmt.Errorf("data must be a User pointer")
+	}
+	user.Emails = make([]model.Email, 0, len(emails))
+	for _, email := range emails {
+		emailMap, ok := email.(map[string]any)
+		if !ok {
+			return fmt.Errorf("email must be an object")
+		}
+		emailValueVal, ok := emailMap["value"]
+		if !ok {
+			return fmt.Errorf("email must have a value field")
+		}
+		emailValue, ok := emailValueVal.(string)
+		if !ok {
+			return fmt.Errorf("email value must be a string")
+		}
+		if err := util.ValidateEmailFormat(emailValue); err != nil {
+			return fmt.Errorf("invalid email format: %w", err)
+		}
+		emailType := "work"
+		if t, ok := emailMap["type"].(string); ok {
+			emailType = t
+		}
+		primary := false
+		if p, ok := emailMap["primary"].(bool); ok {
+			primary = p
+		}
+		user.Emails = append(user.Emails, model.Email{
+			UserID:  user.ID,
+			Value:   emailValue,
+			Type:    emailType,
+			Primary: primary,
+		})
+	}
+	return nil
+}
+
+// handleAddRoles 处理添加 roles 到用户
+func handleAddRoles(data any, value any) error {
+	if value == nil {
+		return nil
+	}
+	roles, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("roles value must be an array")
+	}
+	user, ok := data.(*model.User)
+	if !ok {
+		return fmt.Errorf("data must be a User pointer")
+	}
+	for _, role := range roles {
+		roleMap, ok := role.(map[string]any)
+		if !ok {
+			return fmt.Errorf("role must be an object")
+		}
+		roleValueVal, ok := roleMap["value"]
+		if !ok {
+			return fmt.Errorf("role must have a value field")
+		}
+		roleValue, ok := roleValueVal.(string)
+		if !ok {
+			return fmt.Errorf("role value must be a string")
+		}
+		if err := util.ValidateRoleDefinition(roleValue); err != nil {
+			return fmt.Errorf("invalid role definition: %w", err)
+		}
+		roleType := ""
+		if t, ok := roleMap["type"].(string); ok {
+			roleType = t
+		}
+		display := ""
+		if d, ok := roleMap["display"].(string); ok {
+			display = d
+		}
+		primary := false
+		if p, ok := roleMap["primary"].(bool); ok {
+			primary = p
+		}
+		user.Roles = append(user.Roles, model.Role{
+			UserID:  user.ID,
+			Value:   roleValue,
+			Type:    roleType,
+			Display: display,
+			Primary: primary,
+		})
+	}
+	return nil
+}
+
+// handleReplaceRoles 处理替换用户的 roles
+func handleReplaceRoles(data any, value any) error {
+	if value == nil {
+		return nil
+	}
+	roles, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("roles value must be an array")
+	}
+	user, ok := data.(*model.User)
+	if !ok {
+		return fmt.Errorf("data must be a User pointer")
+	}
+	user.Roles = make([]model.Role, 0, len(roles))
+	for _, role := range roles {
+		roleMap, ok := role.(map[string]any)
+		if !ok {
+			return fmt.Errorf("role must be an object")
+		}
+		roleValueVal, ok := roleMap["value"]
+		if !ok {
+			return fmt.Errorf("role must have a value field")
+		}
+		roleValue, ok := roleValueVal.(string)
+		if !ok {
+			return fmt.Errorf("role value must be a string")
+		}
+		if err := util.ValidateRoleDefinition(roleValue); err != nil {
+			return fmt.Errorf("invalid role definition: %w", err)
+		}
+		roleType := ""
+		if t, ok := roleMap["type"].(string); ok {
+			roleType = t
+		}
+		display := ""
+		if d, ok := roleMap["display"].(string); ok {
+			display = d
+		}
+		primary := false
+		if p, ok := roleMap["primary"].(bool); ok {
+			primary = p
+		}
+		user.Roles = append(user.Roles, model.Role{
+			UserID:  user.ID,
+			Value:   roleValue,
+			Type:    roleType,
+			Display: display,
+			Primary: primary,
+		})
+	}
+	return nil
+}
+
+// handleRemoveEmails 处理从用户中移除 emails
+func handleRemoveEmails(s Store, userID string, data any, value any) error {
+	if value == nil {
+		return nil
+	}
+	emails, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("emails value must be an array")
+	}
+	user, ok := data.(*model.User)
+	if !ok {
+		return fmt.Errorf("data must be a User pointer")
+	}
+	for _, email := range emails {
+		emailMap, ok := email.(map[string]any)
+		if !ok {
+			return fmt.Errorf("email must be an object")
+		}
+		emailValueVal, ok := emailMap["value"]
+		if !ok {
+			return fmt.Errorf("email must have a value field")
+		}
+		emailValue, ok := emailValueVal.(string)
+		if !ok {
+			return fmt.Errorf("email value must be a string")
+		}
+		// 从内存中移除
+		for i, e := range user.Emails {
+			if strings.EqualFold(e.Value, emailValue) {
+				user.Emails = append(user.Emails[:i], user.Emails[i+1:]...)
+				break
+			}
+		}
+		// 对于 DBStore，删除操作已在 PatchUser 中处理，这里不需要重复删除
+		// 对于 MemoryStore 和其他存储，需要调用 Store 方法删除
+		if _, isDB := s.(*DBStore); !isDB {
+			if err := s.RemoveEmailFromUser(userID, emailValue); err != nil {
+				return fmt.Errorf("failed to remove email %s from user: %w", emailValue, err)
+			}
+		}
+	}
+	return nil
+}
+
+// handleRemoveRoles 处理从用户中移除 roles
+func handleRemoveRoles(s Store, userID string, data any, value any) error {
+	if value == nil {
+		return nil
+	}
+	roles, ok := value.([]any)
+	if !ok {
+		return fmt.Errorf("roles value must be an array")
+	}
+	user, ok := data.(*model.User)
+	if !ok {
+		return fmt.Errorf("data must be a User pointer")
+	}
+	for _, role := range roles {
+		roleMap, ok := role.(map[string]any)
+		if !ok {
+			return fmt.Errorf("role must be an object")
+		}
+		roleValueVal, ok := roleMap["value"]
+		if !ok {
+			return fmt.Errorf("role must have a value field")
+		}
+		roleValue, ok := roleValueVal.(string)
+		if !ok {
+			return fmt.Errorf("role value must be a string")
+		}
+		// 从内存中移除
+		for i, r := range user.Roles {
+			if strings.EqualFold(r.Value, roleValue) {
+				user.Roles = append(user.Roles[:i], user.Roles[i+1:]...)
+				break
+			}
+		}
+		// 对于 DBStore，删除操作已在 PatchUser 中处理，这里不需要重复删除
+		// 对于 MemoryStore 和其他存储，需要调用 Store 方法删除
+		if _, isDB := s.(*DBStore); !isDB {
+			if err := s.RemoveRoleFromUser(userID, roleValue); err != nil {
+				return fmt.Errorf("failed to remove role %s from user: %w", roleValue, err)
+			}
 		}
 	}
 	return nil

@@ -34,6 +34,10 @@ services:
       - SCIM_STORAGE_REDIS_URI=${REDIS_URI:-redis://redis:6379/0}
       - SCIM_STORAGE_MYSQL_DSN=${MYSQL_DSN:-root:password@tcp(mysql:3306)/scim?charset=utf8mb4&parseTime=True&loc=Local}
       - SCIM_STORAGE_POSTGRES_DSN=${POSTGRES_DSN:-host=postgres user=postgres password=postgres dbname=scim port=5432 sslmode=disable}
+      - SCIM_STORAGE_AUTHING_API_KEY=${STORAGE_AUTHING_API_KEY:-your-authing-api-key}
+      - SCIM_STORAGE_AUTHING_APP_ID=${STORAGE_AUTHING_APP_ID:-your-authing-app-id}
+      - SCIM_STORAGE_AUTHING_AUTH_URL=${STORAGE_AUTHING_AUTH_URL:-https://api.authing.cn}
+      - SCIM_STORAGE_AUTHING_API_URL=${STORAGE_AUTHING_API_URL:-https://api.authing.cn/v3}
       # 其他配置
       - SCIM_MODE=${SCIM_MODE:-release}
       - SCIM_LOG_LEVEL=${LOG_LEVEL:-info}

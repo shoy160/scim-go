@@ -3,6 +3,8 @@ package util
 import (
 	"reflect"
 	"testing"
+
+	"scim-go/util"
 )
 
 type TestUser struct {
@@ -78,7 +80,7 @@ func TestApplyAttributeSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ApplyAttributeSelection(user, tt.attributes, tt.excludedAttributes)
+			result, err := util.ApplyAttributeSelection(user, tt.attributes, tt.excludedAttributes)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ApplyAttributeSelection() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -124,7 +126,7 @@ func TestParseAttributeList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseAttributeList(tt.attrs)
+			result := util.ParseAttributeList(tt.attrs)
 			if len(result) != tt.wantLength {
 				t.Errorf("parseAttributeList() length = %v, want %v", len(result), tt.wantLength)
 			}
@@ -170,7 +172,7 @@ func TestGetNestedValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetNestedValue(obj, tt.path)
+			result := util.GetNestedValue(obj, tt.path)
 			if result != tt.expected {
 				t.Errorf("GetNestedValue() = %v, want %v", result, tt.expected)
 			}
@@ -202,9 +204,9 @@ func TestSetNestedValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			obj := make(map[string]interface{})
-			SetNestedValue(obj, tt.path, tt.value)
+			util.SetNestedValue(obj, tt.path, tt.value)
 
-			result := GetNestedValue(obj, tt.path)
+			result := util.GetNestedValue(obj, tt.path)
 			if result != tt.expected {
 				t.Errorf("SetNestedValue() result = %v, want %v", result, tt.expected)
 			}
@@ -218,7 +220,7 @@ func TestStructToMap(t *testing.T) {
 		UserName: "john.doe",
 	}
 
-	result, err := StructToMap(user)
+	result, err := util.StructToMap(user)
 	if err != nil {
 		t.Fatalf("StructToMap() error = %v", err)
 	}
@@ -240,7 +242,7 @@ func TestMapToStruct(t *testing.T) {
 	}
 
 	var user TestUser
-	err := MapToStruct(m, &user)
+	err := util.MapToStruct(m, &user)
 	if err != nil {
 		t.Fatalf("MapToStruct() error = %v", err)
 	}
@@ -289,7 +291,7 @@ func TestValidateAttributes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			valid, invalid := ValidateAttributes(validAttrs, tt.attrs)
+			valid, invalid := util.ValidateAttributes(validAttrs, tt.attrs)
 			if len(valid) != tt.wantValidCount {
 				t.Errorf("ValidateAttributes() valid count = %v, want %v", len(valid), tt.wantValidCount)
 			}
@@ -301,7 +303,7 @@ func TestValidateAttributes(t *testing.T) {
 }
 
 func TestGetAttributeNames(t *testing.T) {
-	names := GetAttributeNames(reflect.TypeOf(TestUser{}), "")
+	names := util.GetAttributeNames(reflect.TypeOf(TestUser{}), "")
 
 	// 应该包含所有字段
 	expectedFields := map[string]bool{
