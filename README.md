@@ -80,7 +80,7 @@ mode: release
 # 服务端口
 port: 8080
 # SCIM Bearer Token认证密钥（生产请替换为强随机字符串）
-token: "aGCIhV2JtgAezYduMpE1rK6Omy"
+token: "shoy160"
 # 日志级别：debug/info/warn/error
 log_level: info
 
@@ -155,20 +155,20 @@ SCIM_STORAGE_DRIVER=postgres SCIM_STORAGE_POSTGRES_DSN="host=localhost user=post
 
 **地址**：`http://localhost:8080/swagger/index.html`
 
-**认证**：需要在右上角点击 "Authorize" 按钮，输入 Bearer Token（默认：`aGCIhV2JtgAezYduMpE1rK6Omy`）
+**认证**：需要在右上角点击 "Authorize" 按钮，输入 Bearer Token（默认：`shoy160`）
 
 ### 3. 调用 API 示例
 
 #### 获取用户列表
 
 ```bash
-curl -H "Authorization: Bearer aGCIhV2JtgAezYduMpE1rK6Omy" http://localhost:8080/scim/v2/Users
+curl -H "Authorization: Bearer shoy160" http://localhost:8080/scim/v2/Users
 ```
 
 #### 创建用户
 
 ```bash
-curl -X POST -H "Authorization: Bearer aGCIhV2JtgAezYduMpE1rK6Omy" -H "Content-Type: application/json" -d '{
+curl -X POST -H "Authorization: Bearer shoy160" -H "Content-Type: application/json" -d '{
   "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
   "userName": "johndoe",
   "name": {
@@ -259,7 +259,7 @@ Swagger 文档的配置信息定义在 `main.go` 文件的注释中：
 
 **地址**：`http://localhost:8080/swagger/index.html`
 
-**说明**：Swagger UI 界面无需认证即可访问，便于开发调试。在 Swagger UI 中测试 API 时，需要在右上角点击 "Authorize" 按钮，输入 Bearer Token（默认：`aGCIhV2JtgAezYduMpE1rK6Omy`）进行认证。
+**说明**：Swagger UI 界面无需认证即可访问，便于开发调试。在 Swagger UI 中测试 API 时，需要在右上角点击 "Authorize" 按钮，输入 Bearer Token（默认：`shoy160`）进行认证。
 
 **Swagger JSON 文档**：`http://localhost:8080/swagger/doc.json`
 
@@ -445,7 +445,7 @@ cp .env.example .env
 |--------|------|--------|
 | `STORAGE_DRIVER` | 存储驱动类型 | `memory` |
 | `SCIM_PORT` | SCIM 服务端口 | `8080` |
-| `SCIM_TOKEN` | Bearer Token | `aGCIhV2JtgAezYduMpE1rK6Omy` |
+| `SCIM_TOKEN` | Bearer Token | `shoy160` |
 | `SWAGGER_ENABLED` | 启用 Swagger | `true` |
 
 #### 3.4 常用命令
