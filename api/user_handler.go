@@ -60,7 +60,7 @@ func (h *UserHandlers) ListUsers(c *gin.Context) {
 	needGroups := h.needsGroups(q)
 
 	// 获取当前请求的协议和主机
-	proto := getRequestProtocol(c)
+	proto := GetRequestProtocol(c)
 	host := c.Request.Host
 
 	// 处理用户列表并应用属性选择
@@ -71,21 +71,8 @@ func (h *UserHandlers) ListUsers(c *gin.Context) {
 	}
 
 	// 构造SCIM标准列表响应
-	c.JSON(http.StatusOK, model.ListResponse{
-		Schemas:      []string{h.cfg.ListSchema},
-		TotalResults: int(total),
-		StartIndex:   q.StartIndex,
-		ItemsPerPage: q.Count,
-		Resources:    resources,
-	})
-}
-
-// getRequestProtocol 获取请求协议
-func getRequestProtocol(c *gin.Context) string {
-	if c.Request.TLS != nil {
-		return "https"
-	}
-	return "http"
+	response := util.NewListResponse(h.cfg.ListSchema, int(total), q.StartIndex, q.Count, resources)
+	c.JSON(http.StatusOK, response)
 }
 
 // GetUser 获取单个用户
@@ -118,25 +105,12 @@ func (h *UserHandlers) GetUser(c *gin.Context) {
 
 	// 从数据库填充 meta 数据
 	host := c.Request.Host
-	proto := "http"
-	if c.Request.TLS != nil {
-		proto = "https"
-	}
+	proto := GetRequestProtocol(c)
 	baseURL := proto + "://" + host
 	h.populateUserMeta(user, baseURL)
 
-	// 应用属性选择
+	// 应用属性选择（属性格式已在中间件验证）
 	if q.Attributes != "" || q.ExcludedAttributes != "" {
-		// 验证属性格式
-		if err := util.ValidateAttributeFormat(q.Attributes); err != nil {
-			ErrorHandler(c, err, http.StatusBadRequest, "invalidSyntax")
-			return
-		}
-		if err := util.ValidateAttributeFormat(q.ExcludedAttributes); err != nil {
-			ErrorHandler(c, err, http.StatusBadRequest, "invalidSyntax")
-			return
-		}
-
 		filtered, err := util.ApplyAttributeSelectionWithSpecialRules(user, q.Attributes, q.ExcludedAttributes, "groups")
 		if err != nil {
 			ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
@@ -195,10 +169,7 @@ func (h *UserHandlers) CreateUser(c *gin.Context) {
 
 	// 从数据库填充 meta 数据
 	host := c.Request.Host
-	proto := "http"
-	if c.Request.TLS != nil {
-		proto = "https"
-	}
+	proto := GetRequestProtocol(c)
 	baseURL := proto + "://" + host
 	h.populateUserMeta(&u, baseURL)
 
@@ -264,10 +235,7 @@ func (h *UserHandlers) UpdateUser(c *gin.Context) {
 
 	// 从数据库填充 meta 数据
 	host := c.Request.Host
-	proto := "http"
-	if c.Request.TLS != nil {
-		proto = "https"
-	}
+	proto := GetRequestProtocol(c)
 	baseURL := proto + "://" + host
 	h.populateUserMeta(updatedUser, baseURL)
 
@@ -331,10 +299,7 @@ func (h *UserHandlers) PatchUser(c *gin.Context) {
 
 	// 从数据库填充 meta 数据
 	host := c.Request.Host
-	proto := "http"
-	if c.Request.TLS != nil {
-		proto = "https"
-	}
+	proto := GetRequestProtocol(c)
 	baseURL := proto + "://" + host
 	h.populateUserMeta(user, baseURL)
 
@@ -373,43 +338,23 @@ func (h *UserHandlers) DeleteUser(c *gin.Context) {
 
 // validateFilter 验证过滤器语法
 func (h *UserHandlers) validateFilter(c *gin.Context, filter string) error {
-	if filter == "" {
-		return nil
-	}
-	if err := util.ValidateFilter(filter); err != nil {
-		ErrorHandler(c, err, http.StatusBadRequest, "invalidFilter")
-		return err
-	}
-	return nil
+	return ValidateFilter(c, filter, ErrorHandler)
 }
 
 // needsGroups 检查是否需要加载用户的组信息
 // 返回是否需要加载 groups，但不修改 q.Attributes
 func (h *UserHandlers) needsGroups(q *model.ResourceQuery) bool {
 	if q.Attributes == "" {
-		return false
+		return true
 	}
 	// 检查是否包含 "groups" 或以 "groups." 开头的属性
-	attrs := parseAttributeList(q.Attributes)
+	attrs := util.ParseAttributeList(q.Attributes)
 	for _, attr := range attrs {
 		if attr == "groups" || strings.HasPrefix(attr, "groups.") || attr == "groups.*" {
 			return true
 		}
 	}
 	return false
-}
-
-// parseAttributeList 解析属性列表（从 util 包复制，避免循环依赖）
-func parseAttributeList(attrs string) []string {
-	var result []string
-	parts := strings.Split(attrs, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			result = append(result, part)
-		}
-	}
-	return result
 }
 
 // processUserList 处理用户列表并应用属性选择
@@ -425,22 +370,14 @@ func (h *UserHandlers) processUserList(users []model.User, q *model.ResourceQuer
 
 		// 如果需要，加载用户所属的组
 		if needGroups {
-			groups, err := h.store.GetUserGroups(users[i].ID)
+			groups, err := h.store.GetMemberGroups(users[i].ID)
 			if err != nil {
 				return nil
 			}
 			users[i].Groups = groups
 		}
-		// 应用属性选择
+		// 应用属性选择（属性格式已在中间件验证）
 		if q.Attributes != "" || q.ExcludedAttributes != "" {
-			// 验证属性格式
-			if err := util.ValidateAttributeFormat(q.Attributes); err != nil {
-				return nil
-			}
-			if err := util.ValidateAttributeFormat(q.ExcludedAttributes); err != nil {
-				return nil
-			}
-
 			filtered, err := util.ApplyAttributeSelectionWithSpecialRules(&users[i], q.Attributes, q.ExcludedAttributes, "groups")
 			if err != nil {
 				return nil
@@ -456,22 +393,7 @@ func (h *UserHandlers) processUserList(users []model.User, q *model.ResourceQuer
 
 // populateUserMeta 从数据库字段填充用户 meta 数据
 func (h *UserHandlers) populateUserMeta(user *model.User, baseURL string) {
-	// ResourceType 动态生成，不持久化
-	user.Meta.ResourceType = "User"
-
-	// 从数据库时间戳生成 ISO 8601 格式时间（使用纳秒精度）
-	if !user.CreatedAt.IsZero() {
-		user.Meta.Created = user.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")
-	}
-	if !user.UpdatedAt.IsZero() {
-		user.Meta.LastModified = user.UpdatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")
-	}
-
-	// 动态生成 location
-	user.Meta.Location = baseURL + "/scim/v2/Users/" + user.ID
-
-	// 使用数据库中存储的版本号
-	user.Meta.Version = user.Version
+	user.Meta = util.PopulateMeta("User", user.ID, user.CreatedAt, user.UpdatedAt, user.Version, baseURL, h.cfg.APIPath)
 }
 
 // enrichUser 丰富用户信息（设置Schema和加载组信息）
@@ -483,7 +405,7 @@ func (h *UserHandlers) enrichUser(user *model.User, q *model.ResourceQuery) {
 
 	// 检查是否需要加载用户的组信息
 	if h.needsGroups(q) {
-		groups, _ := h.store.GetUserGroups(user.ID)
+		groups, _ := h.store.GetMemberGroups(user.ID)
 		user.Groups = groups
 	}
 }
@@ -501,18 +423,5 @@ func (h *UserHandlers) validateUserRequiredFields(u *model.User) error {
 
 // validatePatchRequest 验证Patch请求
 func (h *UserHandlers) validatePatchRequest(req *model.PatchRequest) error {
-	// 校验Patch Schema
-	if len(req.Schemas) == 0 || req.Schemas[0] != model.PatchSchema.String() {
-		return errors.New("invalid patch schema")
-	}
-
-	// 验证操作类型
-	validOps := map[string]bool{"add": true, "remove": true, "replace": true}
-	for _, op := range req.Operations {
-		if !validOps[op.Op] {
-			return errors.New("invalid operation: " + op.Op)
-		}
-	}
-
-	return nil
+	return util.ValidatePatchRequest(req)
 }

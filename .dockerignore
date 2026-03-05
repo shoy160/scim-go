@@ -32,3 +32,4 @@ docker-compose*
 *.log
 *.tmp
 .env
+*_local.yaml

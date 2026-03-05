@@ -3,20 +3,19 @@ mode: release
 # 服务端口
 port: 8080
 # SCIM Bearer Token认证密钥（生产请替换为强随机字符串）
-token: "aGCIhV2JtgAezYduMpE1rK6Omy"
+token: "shoy160"
 # 日志级别：debug/info/warn/error
 log_level: info
-
 # 存储配置：memory/redis/mysql/postgres/authing
 storage:
-  driver: postgres
+  driver: memory
   # redis_uri: "redis://redis:6379/0"
-  # mysql_dsn: "root:a123456@tcp(localhost:13306)/db_scim?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s"
-  postgres_dsn: "host=authing.cd user=postgres password=a123456 dbname=db_scim port=15432 sslmode=disable connect_timeout=5"
-  # authing_api_key: "your-authing-api-key"
-  # authing_app_id: "your-authing-app-id"
-  # authing_auth_url: "https://api.authing.cn"
-  # authing_api_url: "https://api.authing.cn/v3"
+  # mysql_dsn: "user:password@tcp(localhost:3306)/db_scim?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s"
+  # postgres_dsn: "host=localhost user=postgres password=password dbname=db_scim port=5432 sslmode=disable connect_timeout=5"
+  # authing_host: "https://console.authing.cn"
+  # authing_user_pool_id: "your-authing-user-pool-id"
+  # authing_access_key: "your-authing-access-key"
+  # authing_access_secret: "your-authing-access-secret"
 
 # 分页配置（SCIM标准）
 pagination:
@@ -32,6 +31,8 @@ scim:
   group_schema: "urn:ietf:params:scim:schemas:core:2.0:Group"
   error_schema: "urn:ietf:params:scim:api:messages:2.0:Error"
   list_schema: "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+  # SCIM API路径
+  api_path: "/scim/v2"
 
 # Swagger文档配置
 swagger:

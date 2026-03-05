@@ -1,9 +1,5 @@
 # 阶段1：构建Go可执行文件
-FROM golang:alpine AS builder
-# 安装构建依赖（合并为一个 RUN）
-RUN apk add --no-cache git ca-certificates && \
-    addgroup -g 1000 scim && \
-    adduser -u 1000 -G scim -s /sbin/nologin -D scim
+FROM registry.cn-hangzhou.aliyuncs.com/shay/golang:alpine AS builder
 WORKDIR /app
 # 复制依赖文件并下载依赖（利用 Docker 缓存）
 COPY go.mod go.sum ./

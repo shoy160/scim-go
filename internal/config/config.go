@@ -39,6 +39,7 @@ type Config struct {
 		GroupSchema   string `yaml:"group_schema"`
 		ErrorSchema   string `yaml:"error_schema"`
 		ListSchema    string `yaml:"list_schema"`
+		APIPath       string `yaml:"api_path"`
 	} `yaml:"scim"`
 
 	Swagger struct {
@@ -194,6 +195,7 @@ func LoadConfig(path string) (Config, bool) {
 	globalCfg.SCIM.GroupSchema = cm.GetString("SCIM_GROUP_SCHEMA", globalCfg.SCIM.GroupSchema)
 	globalCfg.SCIM.ErrorSchema = cm.GetString("SCIM_ERROR_SCHEMA", globalCfg.SCIM.ErrorSchema)
 	globalCfg.SCIM.ListSchema = cm.GetString("SCIM_LIST_SCHEMA", globalCfg.SCIM.ListSchema)
+	globalCfg.SCIM.APIPath = cm.GetString("SCIM_API_PATH", globalCfg.SCIM.APIPath)
 
 	// Swagger 配置
 	globalCfg.Swagger.Enabled = cm.GetBool("SWAGGER_ENABLED", globalCfg.Swagger.Enabled)
@@ -220,6 +222,7 @@ func LoadConfig(path string) (Config, bool) {
 		log.Printf("SCIM Group Schema: %s\n", globalCfg.SCIM.GroupSchema)
 		log.Printf("SCIM Error Schema: %s\n", globalCfg.SCIM.ErrorSchema)
 		log.Printf("SCIM List Schema: %s\n", globalCfg.SCIM.ListSchema)
+		log.Printf("SCIM API Path: %s\n", globalCfg.SCIM.APIPath)
 		log.Println("=== 测试完成 ===")
 		return globalCfg, true
 	}

@@ -21,11 +21,11 @@ type Group struct {
 
 // Member 组成员（关联用户或组）
 type Member struct {
-	GroupID string `json:"-" gorm:"column:group_id;type:varchar(64);index"`
-	Value   string `json:"value" gorm:"type:varchar(64);not null"`              // 成员ID（用户或组）
-	Display string `json:"display,omitempty" gorm:"type:varchar(128)"`          // 成员显示名称
-	Type    string `json:"type,omitempty" gorm:"type:varchar(32);default:User"` // 成员类型（User或Group）
-	Ref     string `json:"$ref,omitempty" gorm:"-"`                             // 成员引用URI（动态生成）
+	GroupID string     `json:"-" gorm:"column:group_id;type:varchar(64);index"`
+	Value   string     `json:"value" gorm:"type:varchar(64);not null"`              // 成员ID（用户或组）
+	Display string     `json:"display,omitempty" gorm:"type:varchar(128)"`          // 成员显示名称
+	Type    MemberType `json:"type,omitempty" gorm:"type:varchar(32);default:User"` // 成员类型（User或Group）
+	Ref     string     `json:"$ref,omitempty" gorm:"-"`                             // 成员引用URI（动态生成）
 }
 
 // TableName 表名映射

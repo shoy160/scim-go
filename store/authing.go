@@ -154,7 +154,7 @@ func (s *AuthingStore) GetUser(id string) (*model.User, error) {
 	}
 
 	// 获取用户所属组
-	groups, err := s.GetUserGroups(user.ID)
+	groups, err := s.GetMemberGroups(user.ID)
 	if err == nil {
 		user.Groups = groups
 	}
@@ -325,7 +325,7 @@ func (s *AuthingStore) CreateGroup(g *model.Group) error {
 
 	// 添加成员
 	for _, member := range g.Members {
-		err := s.AddUserToGroup(g.ID, member.Value)
+		err := s.AddMemberToGroup(g.ID, member.Value, member.Type)
 		if err != nil {
 			return err
 		}
@@ -477,7 +477,7 @@ func (s *AuthingStore) UpdateGroup(g *model.Group) error {
 
 	// 添加新成员
 	for _, member := range g.Members {
-		err := s.AddUserToGroup(g.ID, member.Value)
+		err := s.AddMemberToGroup(g.ID, member.Value, member.Type)
 		if err != nil {
 			return err
 		}
@@ -520,10 +520,16 @@ func (s *AuthingStore) DeleteGroup(id string) error {
 // ---------------------- Group 成员管理 ----------------------
 
 // AddMemberToGroup 添加成员到组（支持用户和组）
-func (s *AuthingStore) AddMemberToGroup(groupID, memberID, memberType string) error {
+func (s *AuthingStore) AddMemberToGroup(groupID, memberID string, memberType ...model.MemberType) error {
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
+
 	// Authing API 目前只支持添加用户到组
 	// 对于组类型的成员，暂时返回错误
-	if memberType != "User" {
+	if mt != model.MemberTypeUser {
 		return model.ErrInvalidValue
 	}
 
@@ -538,13 +544,8 @@ func (s *AuthingStore) AddMemberToGroup(groupID, memberID, memberType string) er
 	return err
 }
 
-// AddUserToGroup 添加用户到组
-func (s *AuthingStore) AddUserToGroup(groupID, userID string) error {
-	return s.AddMemberToGroup(groupID, userID, "User")
-}
-
 // RemoveMemberFromGroup 从组中移除成员（支持用户和组）
-func (s *AuthingStore) RemoveMemberFromGroup(groupID, memberID string) error {
+func (s *AuthingStore) RemoveMemberFromGroup(groupID, memberID string, memberType ...model.MemberType) error {
 	// Authing API 目前只支持从组中移除用户
 	url := s.host + "/groups/" + groupID + "/members/" + memberID
 	headers := s.getAuthHeaders()
@@ -553,13 +554,12 @@ func (s *AuthingStore) RemoveMemberFromGroup(groupID, memberID string) error {
 	return err
 }
 
-// RemoveUserFromGroup 从组中移除用户
-func (s *AuthingStore) RemoveUserFromGroup(groupID, userID string) error {
-	return s.RemoveMemberFromGroup(groupID, userID)
-}
+// IsMemberInGroup 检查成员是否在组中（支持用户和组）
+func (s *AuthingStore) IsMemberInGroup(groupID, memberID string, memberType ...model.MemberType) (bool, error) {
+	// 处理默认参数
+	// 对于 Authing，我们假设所有成员都是用户类型
+	// 如果需要区分类型，可能需要根据 Authing API 的响应结构进行调整
 
-// IsUserInGroup 检查用户是否在组中
-func (s *AuthingStore) IsUserInGroup(groupID, userID string) (bool, error) {
 	url := s.host + "/groups/" + groupID + "/members"
 	headers := s.getAuthHeaders()
 
@@ -576,7 +576,7 @@ func (s *AuthingStore) IsUserInGroup(groupID, userID string) (bool, error) {
 	if members, ok := result["list"].([]interface{}); ok {
 		for _, member := range members {
 			if memberMap, ok := member.(map[string]interface{}); ok {
-				if memberMap["id"].(string) == userID {
+				if memberMap["id"].(string) == memberID {
 					return true, nil
 				}
 			}
@@ -586,9 +586,13 @@ func (s *AuthingStore) IsUserInGroup(groupID, userID string) (bool, error) {
 	return false, nil
 }
 
-// GetUserGroups 获取用户所属的所有组
-func (s *AuthingStore) GetUserGroups(userID string) ([]model.UserGroup, error) {
-	url := s.host + "/users/" + userID + "/groups"
+// GetMemberGroups 获取成员所属的所有组（支持用户和组）
+func (s *AuthingStore) GetMemberGroups(memberID string, memberType ...model.MemberType) ([]model.UserGroup, error) {
+	// 处理默认参数
+	// 对于 Authing，我们假设所有成员都是用户类型
+	// 如果需要支持组作为成员，可能需要根据 Authing API 的能力进行调整
+
+	url := s.host + "/users/" + memberID + "/groups"
 	headers := s.getAuthHeaders()
 
 	resp, err := s.sendRequest("GET", url, headers, nil)
@@ -614,6 +618,73 @@ func (s *AuthingStore) GetUserGroups(userID string) ([]model.UserGroup, error) {
 	}
 
 	return groups, nil
+}
+
+// GetGroupMembers 获取组成员（支持分页和类型过滤）
+func (s *AuthingStore) GetGroupMembers(groupID string, memberType model.MemberType, q *model.ResourceQuery) ([]model.Member, int64, error) {
+	url := s.host + "/groups/" + groupID + "/members"
+	headers := s.getAuthHeaders()
+
+	resp, err := s.sendRequest("GET", url, headers, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, 0, fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	var allMembers []model.Member
+	if items, ok := result["list"].([]interface{}); ok {
+		for _, item := range items {
+			if memberMap, ok := item.(map[string]interface{}); ok {
+				memberTypeStr := model.MemberTypeUser
+				if _, isGroup := memberMap["groupId"]; isGroup {
+					memberTypeStr = model.MemberTypeGroup
+				}
+				if memberType == "" || memberType == memberTypeStr {
+					memberID := ""
+					displayName := ""
+					if memberTypeStr == model.MemberTypeUser {
+						memberID = memberMap["userId"].(string)
+						displayName = memberMap["username"].(string)
+					} else {
+						memberID = memberMap["groupId"].(string)
+						displayName = memberMap["name"].(string)
+					}
+					allMembers = append(allMembers, model.Member{
+						Value:   memberID,
+						Display: displayName,
+						Type:    memberTypeStr,
+					})
+				}
+			}
+		}
+	}
+
+	total := int64(len(allMembers))
+
+	startIndex := q.StartIndex
+	count := q.Count
+
+	if startIndex < 1 {
+		startIndex = 1
+	}
+	if count <= 0 {
+		count = len(allMembers)
+	}
+
+	start := startIndex - 1
+	end := start + count
+	if start > len(allMembers) {
+		return []model.Member{}, total, nil
+	}
+	if end > len(allMembers) {
+		end = len(allMembers)
+	}
+
+	return allMembers[start:end], total, nil
 }
 
 // SetHost 设置服务主机地址

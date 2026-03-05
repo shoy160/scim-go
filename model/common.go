@@ -20,16 +20,16 @@ var (
 	ErrUnauthorized = errors.New("unauthorized")
 	// ErrBadRequest 错误请求错误
 	ErrBadRequest = errors.New("bad request")
-	// ErrUserAlreadyInGroup 用户已在组中错误
-	// 用于在 AddUserToGroup 操作中检测重复添加用户的情况
+	// ErrMemberAlreadyInGroup 成员已在组中错误
+	// 用于在 AddMembersToGroup 操作中检测重复添加成员的情况
 	// 修复日期: 2025-03-03
 	// 修复原因: 统一错误类型，使 API 层能够正确识别并返回 409 Conflict 状态码
-	ErrUserAlreadyInGroup = errors.New("user already in group")
-	// ErrUserNotInGroup 用户不在组中错误
-	// 用于在 RemoveUserFromGroup 操作中检测用户不在组中的情况
+	ErrMemberAlreadyInGroup = errors.New("member already in group")
+	// ErrMemberNotInGroup 成员不在组中错误
+	// 用于在 RemoveMemberFromGroup 操作中检测成员不在组中的情况
 	// 修复日期: 2025-03-03
 	// 修复原因: 统一错误类型，使 API 层能够正确识别并返回 404 Not Found 状态码
-	ErrUserNotInGroup = errors.New("user not in group")
+	ErrMemberNotInGroup = errors.New("member not in group")
 )
 
 // SCIMSchema 定义SCIM标准Schema常量
@@ -189,6 +189,8 @@ type ScimConfig struct {
 	ErrorSchema string
 	// ListSchema 列表Schema
 	ListSchema string
+	// APIPath SCIM API路径
+	APIPath string
 }
 
 // NewScimConfig 创建默认的SCIM配置
@@ -198,5 +200,6 @@ func NewScimConfig() *ScimConfig {
 		GroupSchema:   GroupSchema.String(),
 		ErrorSchema:   ErrorSchema.String(),
 		ListSchema:    ListSchema.String(),
+		APIPath:       "/scim/v2",
 	}
 }

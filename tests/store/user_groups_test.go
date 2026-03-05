@@ -7,7 +7,7 @@ import (
 	"scim-go/store"
 )
 
-func TestMemoryStore_GetUserGroups(t *testing.T) {
+func TestMemoryStore_GetMemberGroups(t *testing.T) {
 	store := store.NewMemory()
 
 	// 创建测试用户
@@ -47,15 +47,15 @@ func TestMemoryStore_GetUserGroups(t *testing.T) {
 	store.CreateGroup(group3)
 
 	// 添加用户到组
-	store.AddUserToGroup("group-1", "user-1")
-	store.AddUserToGroup("group-2", "user-1")
-	store.AddUserToGroup("group-1", "user-2")
+	store.AddMemberToGroup("group-1", "user-1", "User")
+	store.AddMemberToGroup("group-2", "user-1", "User")
+	store.AddMemberToGroup("group-1", "user-2", "User")
 
 	// 测试获取用户所属组
 	t.Run("Get user groups - user in multiple groups", func(t *testing.T) {
-		groups, err := store.GetUserGroups("user-1")
+		groups, err := store.GetMemberGroups("user-1")
 		if err != nil {
-			t.Fatalf("GetUserGroups() error = %v", err)
+			t.Fatalf("GetMemberGroups() error = %v", err)
 		}
 		if len(groups) != 2 {
 			t.Errorf("Expected 2 groups, got %d", len(groups))
@@ -79,9 +79,9 @@ func TestMemoryStore_GetUserGroups(t *testing.T) {
 	})
 
 	t.Run("Get user groups - user in single group", func(t *testing.T) {
-		groups, err := store.GetUserGroups("user-2")
+		groups, err := store.GetMemberGroups("user-2")
 		if err != nil {
-			t.Fatalf("GetUserGroups() error = %v", err)
+			t.Fatalf("GetMemberGroups() error = %v", err)
 		}
 		if len(groups) != 1 {
 			t.Errorf("Expected 1 group, got %d", len(groups))
@@ -101,9 +101,9 @@ func TestMemoryStore_GetUserGroups(t *testing.T) {
 		user3.Name.FamilyName = "Brown"
 		store.CreateUser(user3)
 
-		groups, err := store.GetUserGroups("user-3")
+		groups, err := store.GetMemberGroups("user-3")
 		if err != nil {
-			t.Fatalf("GetUserGroups() error = %v", err)
+			t.Fatalf("GetMemberGroups() error = %v", err)
 		}
 		if len(groups) != 0 {
 			t.Errorf("Expected 0 groups, got %d", len(groups))
@@ -111,9 +111,9 @@ func TestMemoryStore_GetUserGroups(t *testing.T) {
 	})
 
 	t.Run("Get user groups - non-existent user", func(t *testing.T) {
-		groups, err := store.GetUserGroups("non-existent")
+		groups, err := store.GetMemberGroups("non-existent")
 		if err != nil {
-			t.Fatalf("GetUserGroups() error = %v", err)
+			t.Fatalf("GetMemberGroups() error = %v", err)
 		}
 		if len(groups) != 0 {
 			t.Errorf("Expected 0 groups for non-existent user, got %d", len(groups))
@@ -121,7 +121,7 @@ func TestMemoryStore_GetUserGroups(t *testing.T) {
 	})
 }
 
-func TestMemoryStore_GetUserGroupsAfterRemoval(t *testing.T) {
+func TestMemoryStore_GetMemberGroupsAfterRemoval(t *testing.T) {
 	store := store.NewMemory()
 
 	// 创建测试数据
@@ -140,16 +140,16 @@ func TestMemoryStore_GetUserGroupsAfterRemoval(t *testing.T) {
 	store.CreateGroup(group)
 
 	// 添加然后移除用户
-	store.AddUserToGroup("group-1", "user-1")
+	store.AddMemberToGroup("group-1", "user-1", "User")
 
-	groups, _ := store.GetUserGroups("user-1")
+	groups, _ := store.GetMemberGroups("user-1")
 	if len(groups) != 1 {
 		t.Errorf("Expected 1 group before removal, got %d", len(groups))
 	}
 
-	store.RemoveUserFromGroup("group-1", "user-1")
+	store.RemoveMemberFromGroup("group-1", "user-1")
 
-	groups, _ = store.GetUserGroups("user-1")
+	groups, _ = store.GetMemberGroups("user-1")
 	if len(groups) != 0 {
 		t.Errorf("Expected 0 groups after removal, got %d", len(groups))
 	}

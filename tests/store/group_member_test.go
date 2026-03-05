@@ -7,7 +7,7 @@ import (
 	"scim-go/store"
 )
 
-func TestMemoryStore_AddUserToGroup(t *testing.T) {
+func TestMemoryStore_AddMemberToGroup(t *testing.T) {
 	store := store.NewMemory()
 
 	// 创建测试用户
@@ -36,13 +36,13 @@ func TestMemoryStore_AddUserToGroup(t *testing.T) {
 
 	// 测试添加用户到组
 	t.Run("Add user to group", func(t *testing.T) {
-		err := store.AddUserToGroup("group-1", "user-1")
+		err := store.AddMemberToGroup("group-1", "user-1", "User")
 		if err != nil {
-			t.Fatalf("AddUserToGroup() error = %v", err)
+			t.Fatalf("AddMemberToGroup() error = %v", err)
 		}
 
 		// 验证用户已添加
-		inGroup, _ := store.IsUserInGroup("group-1", "user-1")
+		inGroup, _ := store.IsMemberInGroup("group-1", "user-1")
 		if !inGroup {
 			t.Error("User should be in group")
 		}
@@ -59,9 +59,9 @@ func TestMemoryStore_AddUserToGroup(t *testing.T) {
 
 	// 测试添加多个用户
 	t.Run("Add multiple users to group", func(t *testing.T) {
-		err := store.AddUserToGroup("group-1", "user-2")
+		err := store.AddMemberToGroup("group-1", "user-2", "User")
 		if err != nil {
-			t.Fatalf("AddUserToGroup() error = %v", err)
+			t.Fatalf("AddMemberToGroup() error = %v", err)
 		}
 
 		group, _ := store.GetGroup("group-1", false)
@@ -72,18 +72,18 @@ func TestMemoryStore_AddUserToGroup(t *testing.T) {
 
 	// 测试重复添加
 	t.Run("Add duplicate user to group", func(t *testing.T) {
-		err := store.AddUserToGroup("group-1", "user-1")
+		err := store.AddMemberToGroup("group-1", "user-1", "User")
 		if err == nil {
 			t.Error("Should return error for duplicate user")
 		}
-		if err != model.ErrUserAlreadyInGroup {
-			t.Errorf("Expected ErrUserAlreadyInGroup, got %v", err)
+		if err != model.ErrMemberAlreadyInGroup {
+			t.Errorf("Expected ErrMemberAlreadyInGroup, got %v", err)
 		}
 	})
 
 	// 测试添加到不存在的组
 	t.Run("Add user to non-existent group", func(t *testing.T) {
-		err := store.AddUserToGroup("nonexistent", "user-1")
+		err := store.AddMemberToGroup("nonexistent", "user-1", "User")
 		if err != model.ErrNotFound {
 			t.Errorf("Expected ErrNotFound, got %v", err)
 		}
@@ -91,14 +91,14 @@ func TestMemoryStore_AddUserToGroup(t *testing.T) {
 
 	// 测试添加不存在的用户
 	t.Run("Add non-existent user to group", func(t *testing.T) {
-		err := store.AddUserToGroup("group-1", "nonexistent")
+		err := store.AddMemberToGroup("group-1", "nonexistent", "User")
 		if err != model.ErrNotFound {
 			t.Errorf("Expected ErrNotFound, got %v", err)
 		}
 	})
 }
 
-func TestMemoryStore_RemoveUserFromGroup(t *testing.T) {
+func TestMemoryStore_RemoveMemberFromGroup(t *testing.T) {
 	store := store.NewMemory()
 
 	// 创建测试数据
@@ -125,24 +125,24 @@ func TestMemoryStore_RemoveUserFromGroup(t *testing.T) {
 	store.CreateGroup(group)
 
 	// 添加用户到组
-	store.AddUserToGroup("group-1", "user-1")
-	store.AddUserToGroup("group-1", "user-2")
+	store.AddMemberToGroup("group-1", "user-1", "User")
+	store.AddMemberToGroup("group-1", "user-2", "User")
 
 	// 测试移除用户
 	t.Run("Remove user from group", func(t *testing.T) {
-		err := store.RemoveUserFromGroup("group-1", "user-1")
+		err := store.RemoveMemberFromGroup("group-1", "user-1")
 		if err != nil {
-			t.Fatalf("RemoveUserFromGroup() error = %v", err)
+			t.Fatalf("RemoveMemberFromGroup() error = %v", err)
 		}
 
 		// 验证用户已移除
-		inGroup, _ := store.IsUserInGroup("group-1", "user-1")
+		inGroup, _ := store.IsMemberInGroup("group-1", "user-1")
 		if inGroup {
 			t.Error("User should not be in group")
 		}
 
 		// 验证其他用户仍在组中
-		inGroup, _ = store.IsUserInGroup("group-1", "user-2")
+		inGroup, _ = store.IsMemberInGroup("group-1", "user-2")
 		if !inGroup {
 			t.Error("Other user should still be in group")
 		}
@@ -155,25 +155,25 @@ func TestMemoryStore_RemoveUserFromGroup(t *testing.T) {
 
 	// 测试移除不存在的用户
 	t.Run("Remove non-existent user from group", func(t *testing.T) {
-		err := store.RemoveUserFromGroup("group-1", "nonexistent")
+		err := store.RemoveMemberFromGroup("group-1", "nonexistent")
 		if err == nil {
 			t.Error("Should return error for non-existent user")
 		}
-		if err != model.ErrUserNotInGroup {
-			t.Errorf("Expected ErrUserNotInGroup, got %v", err)
+		if err != model.ErrMemberNotInGroup {
+			t.Errorf("Expected ErrMemberNotInGroup, got %v", err)
 		}
 	})
 
 	// 测试从不存在的组移除
 	t.Run("Remove user from non-existent group", func(t *testing.T) {
-		err := store.RemoveUserFromGroup("nonexistent", "user-2")
+		err := store.RemoveMemberFromGroup("nonexistent", "user-2")
 		if err != model.ErrNotFound {
 			t.Errorf("Expected ErrNotFound, got %v", err)
 		}
 	})
 }
 
-func TestMemoryStore_IsUserInGroup(t *testing.T) {
+func TestMemoryStore_IsMemberInGroup(t *testing.T) {
 	store := store.NewMemory()
 
 	// 创建测试数据
@@ -193,9 +193,9 @@ func TestMemoryStore_IsUserInGroup(t *testing.T) {
 
 	// 测试用户不在组中
 	t.Run("User not in group", func(t *testing.T) {
-		inGroup, err := store.IsUserInGroup("group-1", "user-1")
+		inGroup, err := store.IsMemberInGroup("group-1", "user-1")
 		if err != nil {
-			t.Fatalf("IsUserInGroup() error = %v", err)
+			t.Fatalf("IsMemberInGroup() error = %v", err)
 		}
 		if inGroup {
 			t.Error("User should not be in group initially")
@@ -203,13 +203,13 @@ func TestMemoryStore_IsUserInGroup(t *testing.T) {
 	})
 
 	// 添加用户到组
-	store.AddUserToGroup("group-1", "user-1")
+	store.AddMemberToGroup("group-1", "user-1", "User")
 
 	// 测试用户在组中
 	t.Run("User in group", func(t *testing.T) {
-		inGroup, err := store.IsUserInGroup("group-1", "user-1")
+		inGroup, err := store.IsMemberInGroup("group-1", "user-1")
 		if err != nil {
-			t.Fatalf("IsUserInGroup() error = %v", err)
+			t.Fatalf("IsMemberInGroup() error = %v", err)
 		}
 		if !inGroup {
 			t.Error("User should be in group after adding")
@@ -218,7 +218,7 @@ func TestMemoryStore_IsUserInGroup(t *testing.T) {
 
 	// 测试不存在的组
 	t.Run("Check user in non-existent group", func(t *testing.T) {
-		_, err := store.IsUserInGroup("nonexistent", "user-1")
+		_, err := store.IsMemberInGroup("nonexistent", "user-1")
 		if err != model.ErrNotFound {
 			t.Errorf("Expected ErrNotFound, got %v", err)
 		}
@@ -267,8 +267,8 @@ func TestMemoryStore_CreateGroupWithMembers(t *testing.T) {
 	}
 
 	// 验证用户在组中
-	inGroup1, _ := store.IsUserInGroup("group-1", "user-1")
-	inGroup2, _ := store.IsUserInGroup("group-1", "user-2")
+	inGroup1, _ := store.IsMemberInGroup("group-1", "user-1")
+	inGroup2, _ := store.IsMemberInGroup("group-1", "user-2")
 	if !inGroup1 || !inGroup2 {
 		t.Error("Both users should be in group")
 	}
@@ -307,23 +307,23 @@ func TestMemoryStore_GroupMemberIntegrity(t *testing.T) {
 	store.CreateGroup(group2)
 
 	// 将用户添加到两个组
-	store.AddUserToGroup("group-1", "user-1")
-	store.AddUserToGroup("group-2", "user-1")
-	store.AddUserToGroup("group-1", "user-2")
+	store.AddMemberToGroup("group-1", "user-1", "User")
+	store.AddMemberToGroup("group-2", "user-1", "User")
+	store.AddMemberToGroup("group-1", "user-2", "User")
 
 	// 验证用户在两个组中
-	inGroup1_1, _ := store.IsUserInGroup("group-1", "user-1")
-	inGroup2_1, _ := store.IsUserInGroup("group-2", "user-1")
+	inGroup1_1, _ := store.IsMemberInGroup("group-1", "user-1")
+	inGroup2_1, _ := store.IsMemberInGroup("group-2", "user-1")
 	if !inGroup1_1 || !inGroup2_1 {
 		t.Error("User should be in both groups")
 	}
 
 	// 从一个组中移除用户
-	store.RemoveUserFromGroup("group-1", "user-1")
+	store.RemoveMemberFromGroup("group-1", "user-1")
 
 	// 验证用户已从第一个组移除，但仍存在于第二个组
-	inGroup1_1, _ = store.IsUserInGroup("group-1", "user-1")
-	inGroup2_1, _ = store.IsUserInGroup("group-2", "user-1")
+	inGroup1_1, _ = store.IsMemberInGroup("group-1", "user-1")
+	inGroup2_1, _ = store.IsMemberInGroup("group-2", "user-1")
 	if inGroup1_1 {
 		t.Error("User should not be in group-1 after removal")
 	}
@@ -332,7 +332,7 @@ func TestMemoryStore_GroupMemberIntegrity(t *testing.T) {
 	}
 
 	// 验证其他用户不受影响
-	inGroup1_2, _ := store.IsUserInGroup("group-1", "user-2")
+	inGroup1_2, _ := store.IsMemberInGroup("group-1", "user-2")
 	if !inGroup1_2 {
 		t.Error("Other user should still be in group-1")
 	}

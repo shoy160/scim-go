@@ -9,6 +9,7 @@ type ResourceType struct {
 	Description      string            `json:"description,omitempty"`
 	Schema           string            `json:"schema"`
 	SchemaExtensions []SchemaExtension `json:"schemaExtensions,omitempty"`
+	Meta             *Meta             `json:"meta,omitempty"`
 }
 
 // SchemaExtension 模式扩展定义

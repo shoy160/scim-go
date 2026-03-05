@@ -19,6 +19,7 @@ type ScimConfig struct {
 	GroupSchema   string
 	ErrorSchema   string
 	ListSchema    string
+	APIPath       string
 	MaxCount      int
 	DefaultCount  int
 }
@@ -131,7 +132,7 @@ func (reg *RouteRegistrar) registerHealthRoutes() {
 // registerDiscoveryRoutes 注册服务发现路由
 func (reg *RouteRegistrar) registerDiscoveryRoutes() {
 	// SCIM根路径（服务发现，无需认证）
-	reg.r.GET("/scim/v2", func(c *gin.Context) {
+	reg.r.GET(reg.cfg.APIPath, func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:ServiceProviderConfig"},
 			"patch":   gin.H{"supported": true},
@@ -142,8 +143,8 @@ func (reg *RouteRegistrar) registerDiscoveryRoutes() {
 				"maxItemsPerPage": reg.cfg.MaxCount,
 			},
 			"resources": gin.H{
-				"User":  gin.H{"endpoint": "/scim/v2/Users"},
-				"Group": gin.H{"endpoint": "/scim/v2/Groups"},
+				"User":  gin.H{"endpoint": reg.cfg.APIPath + "/Users"},
+				"Group": gin.H{"endpoint": reg.cfg.APIPath + "/Groups"},
 			},
 		})
 	})
@@ -152,13 +153,13 @@ func (reg *RouteRegistrar) registerDiscoveryRoutes() {
 // registerScimRoutes 注册SCIM核心路由
 func (reg *RouteRegistrar) registerScimRoutes() {
 	// ServiceProviderConfig 端点（无需认证，符合 RFC 7644）
-	reg.r.GET("/scim/v2/ServiceProviderConfig", func(c *gin.Context) {
+	reg.r.GET(reg.cfg.APIPath+"/ServiceProviderConfig", func(c *gin.Context) {
 		config := model.GetServiceProviderConfig(reg.cfg.MaxCount)
 		c.JSON(http.StatusOK, config)
 	})
 
 	// SCIM核心组（需要认证+参数绑定+分页）
-	scimGroup := reg.r.Group("/scim/v2")
+	scimGroup := reg.r.Group(reg.cfg.APIPath)
 	scimGroup.Use(Auth(reg.authToken))
 	scimGroup.Use(BindQuery())
 	scimGroup.Use(Pagination(reg.cfg.DefaultCount, reg.cfg.MaxCount))
@@ -178,9 +179,27 @@ func (reg *RouteRegistrar) registerScimRoutes() {
 func (reg *RouteRegistrar) registerResourceTypesRoutes(scimGroup *gin.RouterGroup) {
 	// ResourceTypes 端点（需要认证）
 	scimGroup.GET("/ResourceTypes", func(c *gin.Context) {
+		// 获取完整的基础URL
+		baseURL := getBaseURL(c)
+
+		// 构建完整的ResourceType对象
+		userResourceType := model.GetUserResourceType()
+		userResourceType.Endpoint = baseURL + reg.cfg.APIPath + "/Users"
+		userResourceType.Meta = &model.Meta{
+			ResourceType: "ResourceType",
+			Location:     baseURL + reg.cfg.APIPath + "/ResourceTypes/User",
+		}
+
+		groupResourceType := model.GetGroupResourceType()
+		groupResourceType.Endpoint = baseURL + reg.cfg.APIPath + "/Groups"
+		groupResourceType.Meta = &model.Meta{
+			ResourceType: "ResourceType",
+			Location:     baseURL + reg.cfg.APIPath + "/ResourceTypes/Group",
+		}
+
 		resourceTypes := []model.ResourceType{
-			*model.GetUserResourceType(),
-			*model.GetGroupResourceType(),
+			*userResourceType,
+			*groupResourceType,
 		}
 		c.JSON(http.StatusOK, model.ListResponse{
 			Schemas:      []string{model.ListSchema.String()},
@@ -191,15 +210,39 @@ func (reg *RouteRegistrar) registerResourceTypesRoutes(scimGroup *gin.RouterGrou
 
 	scimGroup.GET("/ResourceTypes/:id", func(c *gin.Context) {
 		id := c.Param("id")
+		// 获取完整的基础URL
+		baseURL := getBaseURL(c)
+
 		switch id {
 		case "User":
-			c.JSON(http.StatusOK, model.GetUserResourceType())
+			resourceType := model.GetUserResourceType()
+			resourceType.Endpoint = reg.cfg.APIPath + "/Users"
+			resourceType.Meta = &model.Meta{
+				ResourceType: "ResourceType",
+				Location:     baseURL + reg.cfg.APIPath + "/ResourceTypes/User",
+			}
+			c.JSON(http.StatusOK, resourceType)
 		case "Group":
-			c.JSON(http.StatusOK, model.GetGroupResourceType())
+			resourceType := model.GetGroupResourceType()
+			resourceType.Endpoint = reg.cfg.APIPath + "/Groups"
+			resourceType.Meta = &model.Meta{
+				ResourceType: "ResourceType",
+				Location:     baseURL + reg.cfg.APIPath + "/ResourceTypes/Group",
+			}
+			c.JSON(http.StatusOK, resourceType)
 		default:
 			ErrorHandler(c, model.ErrNotFound, http.StatusNotFound, "notFound")
 		}
 	})
+}
+
+// getBaseURL 获取完整的基础URL
+func getBaseURL(c *gin.Context) string {
+	protocol := "http"
+	if c.Request.TLS != nil {
+		protocol = "https"
+	}
+	return protocol + "://" + c.Request.Host
 }
 
 // registerSchemasRoutes 注册Schemas路由
@@ -238,6 +281,7 @@ func (reg *RouteRegistrar) registerUserRoutes(scimGroup *gin.RouterGroup) {
 		GroupSchema:   reg.cfg.GroupSchema,
 		ErrorSchema:   reg.cfg.ErrorSchema,
 		ListSchema:    reg.cfg.ListSchema,
+		APIPath:       reg.cfg.APIPath,
 	})
 
 	// 注册User接口（全方法：GET/POST/PUT/PATCH/DELETE）
@@ -258,6 +302,7 @@ func (reg *RouteRegistrar) registerGroupRoutes(scimGroup *gin.RouterGroup) {
 		GroupSchema:   reg.cfg.GroupSchema,
 		ErrorSchema:   reg.cfg.ErrorSchema,
 		ListSchema:    reg.cfg.ListSchema,
+		APIPath:       reg.cfg.APIPath,
 	})
 
 	// 注册Group接口（全方法：GET/POST/PUT/PATCH/DELETE）
@@ -270,6 +315,7 @@ func (reg *RouteRegistrar) registerGroupRoutes(scimGroup *gin.RouterGroup) {
 	groupGroup.DELETE("/:id", groupHandler.DeleteGroup)
 
 	// 注册Group成员管理接口
-	groupGroup.POST("/:id/members", groupHandler.AddUserToGroup)
-	groupGroup.DELETE("/:id/members/:userId", groupHandler.RemoveUserFromGroup)
+	groupGroup.GET("/:id/members", groupHandler.GetGroupMembers)
+	groupGroup.POST("/:id/members", groupHandler.AddMembersToGroup)
+	groupGroup.DELETE("/:id/members/:userId", groupHandler.RemoveMemberFromGroup)
 }

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"scim-go/model"
 	"scim-go/store"
@@ -59,10 +62,7 @@ func (h *GroupHandlers) ListGroups(c *gin.Context) {
 
 	// 获取当前请求的host和proto
 	host := c.Request.Host
-	proto := "http"
-	if c.Request.TLS != nil {
-		proto = "https"
-	}
+	proto := GetRequestProtocol(c)
 
 	// 处理组列表并应用属性选择
 	resources := h.processGroupList(groups, q, host, proto)
@@ -72,13 +72,8 @@ func (h *GroupHandlers) ListGroups(c *gin.Context) {
 	}
 
 	// 构造SCIM标准列表响应
-	c.JSON(http.StatusOK, model.ListResponse{
-		Schemas:      []string{h.cfg.ListSchema},
-		TotalResults: int(total),
-		StartIndex:   q.StartIndex,
-		ItemsPerPage: q.Count,
-		Resources:    resources,
-	})
+	response := util.NewListResponse(h.cfg.ListSchema, int(total), q.StartIndex, q.Count, resources)
+	c.JSON(http.StatusOK, response)
 }
 
 // GetGroup 获取单个组
@@ -116,25 +111,12 @@ func (h *GroupHandlers) GetGroup(c *gin.Context) {
 
 	// 从数据库填充 meta 数据
 	host := c.Request.Host
-	proto := "http"
-	if c.Request.TLS != nil {
-		proto = "https"
-	}
+	proto := GetRequestProtocol(c)
 	baseURL := proto + "://" + host
 	h.populateGroupMeta(group, baseURL)
 
-	// 应用属性选择
+	// 应用属性选择（属性格式已在中间件验证）
 	if q.Attributes != "" || q.ExcludedAttributes != "" {
-		// 验证属性格式
-		if err := util.ValidateAttributeFormat(q.Attributes); err != nil {
-			ErrorHandler(c, err, http.StatusBadRequest, "invalidSyntax")
-			return
-		}
-		if err := util.ValidateAttributeFormat(q.ExcludedAttributes); err != nil {
-			ErrorHandler(c, err, http.StatusBadRequest, "invalidSyntax")
-			return
-		}
-
 		filtered, err := util.ApplyAttributeSelectionWithSpecialRules(group, q.Attributes, q.ExcludedAttributes, "members")
 		if err != nil {
 			ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
@@ -197,10 +179,7 @@ func (h *GroupHandlers) CreateGroup(c *gin.Context) {
 
 	// 从数据库填充 meta 数据
 	host := c.Request.Host
-	proto := "http"
-	if c.Request.TLS != nil {
-		proto = "https"
-	}
+	proto := GetRequestProtocol(c)
 	baseURL := proto + "://" + host
 	h.populateGroupMeta(&g, baseURL)
 
@@ -261,10 +240,7 @@ func (h *GroupHandlers) UpdateGroup(c *gin.Context) {
 
 	// 从数据库填充 meta 数据
 	host := c.Request.Host
-	proto := "http"
-	if c.Request.TLS != nil {
-		proto = "https"
-	}
+	proto := GetRequestProtocol(c)
 	baseURL := proto + "://" + host
 	h.populateGroupMeta(updatedGroup, baseURL)
 
@@ -323,10 +299,7 @@ func (h *GroupHandlers) PatchGroup(c *gin.Context) {
 
 	// 从数据库填充 meta 数据
 	host := c.Request.Host
-	proto := "http"
-	if c.Request.TLS != nil {
-		proto = "https"
-	}
+	proto := GetRequestProtocol(c)
 	baseURL := proto + "://" + host
 	h.populateGroupMeta(group, baseURL)
 
@@ -361,56 +334,59 @@ func (h *GroupHandlers) DeleteGroup(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// AddUserToGroup 添加用户到组
-// @Summary 添加用户到组
-// @Description 将用户添加到指定组
+// AddMembersToGroup 添加成员到组
+// @Summary 添加成员到组
+// @Description 将一个或多个成员添加到指定组
 // @Tags Groups
 // @Accept json
 // @Produce json
 // @Param id path string true "组ID"
-// @Param member body model.Member true "成员信息"
+// @Param member body model.Member false "单个成员信息"
+// @Param members body []model.Member false "成员信息数组"
 // @Success 201 {object} model.Group "添加成功"
 // @Failure 400 {object} model.ErrorResponse "请求参数错误"
 // @Failure 401 {object} model.ErrorResponse "未授权"
-// @Failure 404 {object} model.ErrorResponse "组或用户不存在"
+// @Failure 404 {object} model.ErrorResponse "组或成员不存在"
 // @Failure 500 {object} model.ErrorResponse "服务器内部错误"
 // @Router /Groups/{id}/members [post]
 // @Security BearerAuth
-func (h *GroupHandlers) AddUserToGroup(c *gin.Context) {
+func (h *GroupHandlers) AddMembersToGroup(c *gin.Context) {
 	groupID := c.Param("id")
-	var member model.Member
-	if err := c.ShouldBindJSON(&member); err != nil {
+
+	// 读取请求体到缓冲区
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(c.Request.Body); err != nil {
 		ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
 		return
 	}
 
-	// 验证成员值
-	if member.Value == "" {
-		ErrorHandler(c, errors.New("member value is required"), http.StatusBadRequest, "invalidValue")
-		return
-	}
-
-	// 设置默认类型为 User
-	if member.Type == "" {
-		member.Type = "User"
-	}
-
-	// 添加成员到组
-	if err := h.store.AddMemberToGroup(groupID, member.Value, member.Type); err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			ErrorHandler(c, err, http.StatusNotFound, "notFound")
+	// 尝试绑定为数组
+	var members []model.Member
+	if err := json.Unmarshal(buf.Bytes(), &members); err == nil {
+		// 验证成员数组
+		if len(members) == 0 {
+			ErrorHandler(c, errors.New("members array is required and cannot be empty"), http.StatusBadRequest, "invalidValue")
 			return
 		}
-		if errors.Is(err, model.ErrUserAlreadyInGroup) {
-			ErrorHandler(c, err, http.StatusConflict, "uniqueness")
-			return
+
+		// 处理每个成员
+		for _, member := range members {
+			if err := h.processMember(c, groupID, member); err != nil {
+				return
+			}
 		}
-		if errors.Is(err, model.ErrInvalidValue) {
+	} else {
+		// 尝试绑定为单个成员
+		var member model.Member
+		if err := json.Unmarshal(buf.Bytes(), &member); err != nil {
 			ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
 			return
 		}
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
+
+		// 处理单个成员
+		if err := h.processMember(c, groupID, member); err != nil {
+			return
+		}
 	}
 
 	// 返回更新后的组
@@ -423,34 +399,77 @@ func (h *GroupHandlers) AddUserToGroup(c *gin.Context) {
 	if len(group.Schemas) == 0 {
 		group.Schemas = []string{h.cfg.GroupSchema}
 	}
+
+	// 填充组的 meta 数据和成员的 $ref 属性
+	host := c.Request.Host
+	proto := GetRequestProtocol(c)
+	baseURL := proto + "://" + host
+	h.populateGroupMeta(group, baseURL)
+
 	c.JSON(http.StatusCreated, group)
 }
 
-// RemoveUserFromGroup 从组中移除用户
-// @Summary 从组中移除用户
-// @Description 将用户从指定组中移除
+// processMember 处理单个成员的添加逻辑
+func (h *GroupHandlers) processMember(c *gin.Context, groupID string, member model.Member) error {
+	// 验证成员值
+	if member.Value == "" {
+		ErrorHandler(c, errors.New("member value is required"), http.StatusBadRequest, "invalidValue")
+		return errors.New("member value is required")
+	}
+
+	// 验证并设置成员类型
+	memberType, err := util.ValidateMemberType(string(member.Type))
+	if err != nil {
+		ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
+		return err
+	}
+
+	// 添加成员到组
+	if err := h.store.AddMemberToGroup(groupID, member.Value, memberType); err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			ErrorHandler(c, err, http.StatusNotFound, "notFound")
+			return err
+		}
+		if errors.Is(err, model.ErrMemberAlreadyInGroup) {
+			ErrorHandler(c, err, http.StatusConflict, "uniqueness")
+			return err
+		}
+		if errors.Is(err, model.ErrInvalidValue) {
+			ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
+			return err
+		}
+		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
+		return err
+	}
+
+	return nil
+}
+
+// RemoveMemberFromGroup 从组中移除成员
+// @Summary 从组中移除成员
+// @Description 将成员从指定组中移除
 // @Tags Groups
 // @Accept json
 // @Produce json
 // @Param id path string true "组ID"
-// @Param userId path string true "用户ID"
+// @Param userId path string true "成员ID"
 // @Success 204 "移除成功"
 // @Failure 401 {object} model.ErrorResponse "未授权"
-// @Failure 404 {object} model.ErrorResponse "组或用户不存在"
+// @Failure 404 {object} model.ErrorResponse "组或成员不存在"
 // @Failure 500 {object} model.ErrorResponse "服务器内部错误"
 // @Router /Groups/{id}/members/{userId} [delete]
 // @Security BearerAuth
-func (h *GroupHandlers) RemoveUserFromGroup(c *gin.Context) {
+func (h *GroupHandlers) RemoveMemberFromGroup(c *gin.Context) {
 	groupID := c.Param("id")
-	userID := c.Param("userId")
+	memberID := c.Param("userId")
 
-	// 从组中移除用户
-	if err := h.store.RemoveUserFromGroup(groupID, userID); err != nil {
+	// 从组中移除成员（支持User和Group类型）
+	if err := h.store.RemoveMemberFromGroup(groupID, memberID); err != nil {
 		if errors.Is(err, model.ErrNotFound) {
 			ErrorHandler(c, err, http.StatusNotFound, "notFound")
 			return
 		}
-		if errors.Is(err, model.ErrUserNotInGroup) {
+		if errors.Is(err, model.ErrMemberNotInGroup) {
 			ErrorHandler(c, err, http.StatusNotFound, "notFound")
 			return
 		}
@@ -462,18 +481,76 @@ func (h *GroupHandlers) RemoveUserFromGroup(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// GetGroupMembers 获取组成员
+// @Summary 获取组成员
+// @Description 获取指定组的成员列表，支持分页和成员类型过滤
+// @Tags Groups
+// @Accept json
+// @Produce json
+// @Param id path string true "组ID"
+// @Param startIndex query int false "起始索引（从1开始）"
+// @Param count query int false "每页数量"
+// @Param memberType query string false "成员类型过滤（User或Group）"
+// @Success 200 {object} model.ListResponse "组成员列表"
+// @Failure 401 {object} model.ErrorResponse "未授权"
+// @Failure 404 {object} model.ErrorResponse "组不存在"
+// @Failure 500 {object} model.ErrorResponse "服务器内部错误"
+// @Router /Groups/{id}/members [get]
+// @Security BearerAuth
+func (h *GroupHandlers) GetGroupMembers(c *gin.Context) {
+	groupID := c.Param("id")
+	q := c.MustGet("scim_query").(*model.ResourceQuery)
+	memberTypeStr := c.Query("memberType")
+
+	// 验证 memberType 参数
+	var memberType model.MemberType
+	if memberTypeStr != "" {
+		if mt, ok := model.ParseMemberType(memberTypeStr); ok {
+			memberType = mt
+		} else {
+			ErrorHandler(c, errors.New("invalid memberType: must be 'User' or 'Group'"), http.StatusBadRequest, "invalidValue")
+			return
+		}
+	}
+
+	members, total, err := h.store.GetGroupMembers(groupID, memberType, q)
+	if err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			ErrorHandler(c, err, http.StatusNotFound, "notFound")
+			return
+		}
+		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
+		return
+	}
+
+	host := c.Request.Host
+	proto := GetRequestProtocol(c)
+	baseURL := proto + "://" + host
+
+	// 生成成员的$ref属性
+	util.GenerateMembersRef(members, baseURL, h.cfg.APIPath)
+
+	// 将members转换为[]interface{}
+	resources := make([]interface{}, len(members))
+	for i, member := range members {
+		resources[i] = member
+	}
+	response := util.NewListResponse(h.cfg.ListSchema, int(total), q.StartIndex, q.Count, resources)
+	c.JSON(http.StatusOK, response)
+}
+
+// parseInt 解析字符串为整数
+func parseInt(s string) int {
+	var n int
+	fmt.Sscanf(s, "%d", &n)
+	return n
+}
+
 // ---------------------- Group 辅助方法 ----------------------
 
 // validateFilter 验证过滤器语法
 func (h *GroupHandlers) validateFilter(c *gin.Context, filter string) error {
-	if filter == "" {
-		return nil
-	}
-	if err := util.ValidateFilter(filter); err != nil {
-		ErrorHandler(c, err, http.StatusBadRequest, "invalidFilter")
-		return err
-	}
-	return nil
+	return ValidateFilter(c, filter, ErrorHandler)
 }
 
 // processGroupList 处理组列表并应用属性选择
@@ -487,16 +564,8 @@ func (h *GroupHandlers) processGroupList(groups []model.Group, q *model.Resource
 		// 从数据库填充 meta 数据
 		h.populateGroupMeta(&groups[i], baseURL)
 
-		// 应用属性选择
+		// 应用属性选择（属性格式已在中间件验证）
 		if q.Attributes != "" || q.ExcludedAttributes != "" {
-			// 验证属性格式
-			if err := util.ValidateAttributeFormat(q.Attributes); err != nil {
-				return nil
-			}
-			if err := util.ValidateAttributeFormat(q.ExcludedAttributes); err != nil {
-				return nil
-			}
-
 			filtered, err := util.ApplyAttributeSelectionWithSpecialRules(&groups[i], q.Attributes, q.ExcludedAttributes, "members")
 			if err != nil {
 				return nil
@@ -517,49 +586,14 @@ func (h *GroupHandlers) needsMembers(q *model.ResourceQuery) bool {
 
 // populateGroupMeta 从数据库字段填充组 meta 数据
 func (h *GroupHandlers) populateGroupMeta(group *model.Group, baseURL string) {
-	// ResourceType 动态生成，不持久化
-	group.Meta.ResourceType = "Group"
-
-	// 从数据库时间戳生成 ISO 8601 格式时间（使用纳秒精度）
-	if !group.CreatedAt.IsZero() {
-		group.Meta.Created = group.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")
-	}
-	if !group.UpdatedAt.IsZero() {
-		group.Meta.LastModified = group.UpdatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")
-	}
-
-	// 动态生成 location
-	group.Meta.Location = baseURL + "/scim/v2/Groups/" + group.ID
+	// 填充组的meta数据
+	group.Meta = util.PopulateMeta("Group", group.ID, group.CreatedAt, group.UpdatedAt, group.Version, baseURL, h.cfg.APIPath)
 
 	// 动态生成成员的 $ref
-	for i := range group.Members {
-		if group.Members[i].Type == "Group" {
-			group.Members[i].Ref = baseURL + "/scim/v2/Groups/" + group.Members[i].Value
-		} else {
-			// 默认类型为 User
-			group.Members[i].Type = "User"
-			group.Members[i].Ref = baseURL + "/scim/v2/Users/" + group.Members[i].Value
-		}
-	}
-
-	// 使用数据库中存储的版本号
-	group.Meta.Version = group.Version
+	util.GenerateMembersRef(group.Members, baseURL, h.cfg.APIPath)
 }
 
 // validatePatchRequest 验证Patch请求
 func (h *GroupHandlers) validatePatchRequest(req *model.PatchRequest) error {
-	// 校验Patch Schema
-	if len(req.Schemas) == 0 || req.Schemas[0] != model.PatchSchema.String() {
-		return errors.New("invalid patch schema")
-	}
-
-	// 验证操作类型
-	validOps := map[string]bool{"add": true, "remove": true, "replace": true}
-	for _, op := range req.Operations {
-		if !validOps[op.Op] {
-			return errors.New("invalid operation: " + op.Op)
-		}
-	}
-
-	return nil
+	return util.ValidatePatchRequest(req)
 }

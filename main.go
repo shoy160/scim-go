@@ -9,7 +9,7 @@
 // @license.name Apache 2.0
 // @license.url http://www.apache.org/licenses/LICENSE-2.0.html
 
-// @host localhost:8080
+// @host
 // @BasePath /scim/v2
 
 // @securityDefinitions.apikey BearerAuth
@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -114,13 +115,83 @@ func initPostgres(cfg config.Config) store.Store {
 	return store.NewDB(db, nil)
 }
 
+// printUsage 打印使用帮助
+func printUsage() {
+	fmt.Println("SCIM 2.0 API Server")
+	fmt.Println()
+	fmt.Println("用法:")
+	fmt.Println("  go run main.go [选项]")
+	fmt.Println()
+	fmt.Println("选项:")
+	fmt.Println("  -config string       配置文件路径 (支持 .yaml, .json, .env)")
+	fmt.Println("  -port string         服务端口号 (默认: 8080)")
+	fmt.Println("  -token string        身份验证令牌")
+	fmt.Println("  -storage string      数据存储方式 (memory/redis/mysql/postgres/authing)")
+	fmt.Println("  -mode string         运行模式 (debug/test/release)")
+	fmt.Println("  -log-level string    日志级别 (debug/info/warn/error)")
+	fmt.Println("  -redis-uri string    Redis连接URI")
+	fmt.Println("  -mysql-dsn string    MySQL DSN连接字符串")
+	fmt.Println("  -postgres-dsn string PostgreSQL DSN连接字符串")
+	fmt.Println("  -swagger             启用Swagger文档")
+	fmt.Println("  -help                显示帮助信息")
+	fmt.Println("  -version             显示版本信息")
+	fmt.Println()
+	fmt.Println("配置优先级:")
+	fmt.Println("  命令行参数 > 环境变量 > 配置文件 > .env文件 > 默认值")
+	fmt.Println()
+	fmt.Println("环境变量:")
+	fmt.Println("  SCIM_MODE              运行模式")
+	fmt.Println("  SCIM_PORT              服务端口号")
+	fmt.Println("  SCIM_TOKEN             身份验证令牌")
+	fmt.Println("  SCIM_LOG_LEVEL         日志级别")
+	fmt.Println("  SCIM_STORAGE_DRIVER    存储驱动")
+	fmt.Println("  SCIM_STORAGE_REDIS_URI Redis连接URI")
+	fmt.Println("  SCIM_STORAGE_MYSQL_DSN MySQL DSN")
+	fmt.Println("  SCIM_STORAGE_POSTGRES_DSN PostgreSQL DSN")
+	fmt.Println("  SCIM_ENCRYPTION_KEY    加密密钥（用于解密敏感配置）")
+}
+
+// printVersion 打印版本信息
+func printVersion() {
+	fmt.Println("SCIM 2.0 API Server v1.0.0")
+	fmt.Println("Build: 2026-03-05")
+	fmt.Println("Go Version: 1.21+")
+}
+
 func main() {
-	// 1. 加载配置文件
-	var configTest bool
-	globalCfg, configTest = config.LoadConfig("./config.yaml")
-	if configTest {
+	// 1. 初始化命令行参数
+	config.InitCLIArgs()
+
+	// 2. 处理帮助和版本信息
+	if *config.GlobalCLIArgs.ShowHelp {
+		printUsage()
 		return
 	}
+	if *config.GlobalCLIArgs.ShowVersion {
+		printVersion()
+		return
+	}
+
+	// 3. 加载配置（按优先级：命令行 > 环境变量 > 配置文件 > .env > 默认值）
+	configPath := *config.GlobalCLIArgs.ConfigPath
+	if configPath == "" {
+		// 尝试默认配置文件路径
+		for _, path := range []string{"./config.yaml", "./config.yml", "./config.json"} {
+			if _, err := os.Stat(path); err == nil {
+				configPath = path
+				break
+			}
+		}
+	}
+
+	cfg, registry, err := config.LoadConfigWithPriority(configPath)
+	if err != nil {
+		log.Fatalf("配置加载失败: %v", err)
+	}
+	globalCfg = *cfg
+
+	// 4. 打印配置摘要
+	config.PrintConfigSummary(cfg, registry)
 
 	// 2. 设置Gin运行模式
 	gin.SetMode(globalCfg.Mode)
@@ -137,6 +208,7 @@ func main() {
 		GroupSchema:   globalCfg.SCIM.GroupSchema,
 		ErrorSchema:   globalCfg.SCIM.ErrorSchema,
 		ListSchema:    globalCfg.SCIM.ListSchema,
+		APIPath:       globalCfg.SCIM.APIPath,
 		DefaultCount:  globalCfg.Pagination.DefaultCount,
 		MaxCount:      globalCfg.Pagination.MaxCount,
 	}

@@ -418,6 +418,77 @@ const docTemplate = `{
             }
         },
         "/Groups/{id}/members": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取指定组的成员列表，支持分页和成员类型过滤",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Groups"
+                ],
+                "summary": "获取组成员",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "组ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "起始索引（从1开始）",
+                        "name": "startIndex",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "count",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "成员类型过滤（User或Group）",
+                        "name": "memberType",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "组成员列表",
+                        "schema": {
+                            "$ref": "#/definitions/model.ListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "未授权",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "组不存在",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "服务器内部错误",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -1054,13 +1125,36 @@ const docTemplate = `{
                 },
                 "type": {
                     "description": "成员类型（User或Group）",
-                    "type": "string"
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/model.MemberType"
+                        }
+                    ]
                 },
                 "value": {
                     "description": "成员ID（用户或组）",
                     "type": "string"
                 }
             }
+        },
+        "model.MemberType": {
+            "type": "string",
+            "enum": [
+                "User",
+                "Group"
+            ],
+            "x-enum-comments": {
+                "MemberTypeGroup": "组类型",
+                "MemberTypeUser": "用户类型"
+            },
+            "x-enum-descriptions": [
+                "用户类型",
+                "组类型"
+            ],
+            "x-enum-varnames": [
+                "MemberTypeUser",
+                "MemberTypeGroup"
+            ]
         },
         "model.Meta": {
             "type": "object",
@@ -1258,7 +1352,7 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0.0",
-	Host:             "localhost:8080",
+	Host:             "",
 	BasePath:         "/scim/v2",
 	Schemes:          []string{},
 	Title:            "SCIM 2.0 API",

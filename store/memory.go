@@ -480,9 +480,15 @@ func (m *MemoryStore) DeleteGroup(id string) error {
 
 // AddMemberToGroup 添加成员到组（支持用户和组）
 // 优化：使用 map 检查成员是否存在，时间复杂度从 O(n) 降低到 O(1)
-func (m *MemoryStore) AddMemberToGroup(groupID, memberID, memberType string) error {
+func (m *MemoryStore) AddMemberToGroup(groupID, memberID string, memberType ...model.MemberType) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
 
 	// 验证组是否存在
 	group, ok := m.groups[groupID]
@@ -491,11 +497,11 @@ func (m *MemoryStore) AddMemberToGroup(groupID, memberID, memberType string) err
 	}
 
 	// 验证成员是否存在
-	if memberType == "User" {
+	if mt == "User" {
 		if _, ok := m.users[memberID]; !ok {
 			return model.ErrNotFound
 		}
-	} else if memberType == "Group" {
+	} else if mt == "Group" {
 		if _, ok := m.groups[memberID]; !ok {
 			return model.ErrNotFound
 		}
@@ -509,30 +515,31 @@ func (m *MemoryStore) AddMemberToGroup(groupID, memberID, memberType string) err
 		memberMap[member.Value] = true
 	}
 	if memberMap[memberID] {
-		return model.ErrUserAlreadyInGroup
+		return model.ErrMemberAlreadyInGroup
 	}
 
 	// 添加成员
 	group.Members = append(group.Members, model.Member{
 		GroupID: groupID,
 		Value:   memberID,
-		Type:    memberType,
+		Type:    mt,
 	})
 
 	m.groups[groupID] = group
 	return nil
 }
 
-// AddUserToGroup 添加用户到组
-func (m *MemoryStore) AddUserToGroup(groupID, userID string) error {
-	return m.AddMemberToGroup(groupID, userID, "User")
-}
-
 // RemoveMemberFromGroup 从组中移除成员（支持用户和组）
 // 优化：使用切片过滤，避免多次内存分配
-func (m *MemoryStore) RemoveMemberFromGroup(groupID, memberID string) error {
+func (m *MemoryStore) RemoveMemberFromGroup(groupID, memberID string, memberType ...model.MemberType) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
 
 	// 验证组是否存在
 	group, ok := m.groups[groupID]
@@ -544,7 +551,11 @@ func (m *MemoryStore) RemoveMemberFromGroup(groupID, memberID string) error {
 	found := false
 	newMembers := make([]model.Member, 0, len(group.Members))
 	for _, member := range group.Members {
-		if member.Value == memberID {
+		memberType := member.Type
+		if memberType == "" {
+			memberType = model.MemberTypeUser
+		}
+		if member.Value == memberID && (mt == "" || memberType == mt) {
 			found = true
 		} else {
 			newMembers = append(newMembers, member)
@@ -552,7 +563,7 @@ func (m *MemoryStore) RemoveMemberFromGroup(groupID, memberID string) error {
 	}
 
 	if !found {
-		return model.ErrUserNotInGroup
+		return model.ErrMemberNotInGroup
 	}
 
 	group.Members = newMembers
@@ -560,16 +571,17 @@ func (m *MemoryStore) RemoveMemberFromGroup(groupID, memberID string) error {
 	return nil
 }
 
-// RemoveUserFromGroup 从组中移除用户
-func (m *MemoryStore) RemoveUserFromGroup(groupID, userID string) error {
-	return m.RemoveMemberFromGroup(groupID, userID)
-}
-
-// IsUserInGroup 检查用户是否在组中
+// IsMemberInGroup 检查成员是否在组中（支持用户和组）
 // 优化：直接遍历，时间复杂度 O(n)
-func (m *MemoryStore) IsUserInGroup(groupID, userID string) (bool, error) {
+func (m *MemoryStore) IsMemberInGroup(groupID, memberID string, memberType ...model.MemberType) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
 
 	group, ok := m.groups[groupID]
 	if !ok {
@@ -577,7 +589,11 @@ func (m *MemoryStore) IsUserInGroup(groupID, userID string) (bool, error) {
 	}
 
 	for _, member := range group.Members {
-		if member.Value == userID {
+		memberType := member.Type
+		if memberType == "" {
+			memberType = model.MemberTypeUser
+		}
+		if member.Value == memberID && (mt == "" || memberType == mt) {
 			return true, nil
 		}
 	}
@@ -585,17 +601,27 @@ func (m *MemoryStore) IsUserInGroup(groupID, userID string) (bool, error) {
 	return false, nil
 }
 
-// GetUserGroups 获取用户所属的所有组
+// GetMemberGroups 获取成员所属的所有组（支持用户和组）
 // 优化：预分配切片容量
-func (m *MemoryStore) GetUserGroups(userID string) ([]model.UserGroup, error) {
+func (m *MemoryStore) GetMemberGroups(memberID string, memberType ...model.MemberType) ([]model.UserGroup, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// 预分配切片容量（假设平均每个用户在 3 个组中）
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
+
+	// 预分配切片容量（假设平均每个成员在 3 个组中）
 	groups := make([]model.UserGroup, 0, 3)
 	for _, group := range m.groups {
 		for _, member := range group.Members {
-			if member.Value == userID {
+			memberType := member.Type
+			if memberType == "" {
+				memberType = "User"
+			}
+			if member.Value == memberID && (mt == "" || memberType == mt) {
 				groups = append(groups, model.UserGroup{
 					Value:   group.ID,
 					Display: group.DisplayName,
@@ -606,6 +632,49 @@ func (m *MemoryStore) GetUserGroups(userID string) ([]model.UserGroup, error) {
 	}
 
 	return groups, nil
+}
+
+// GetGroupMembers 获取组成员（支持分页和类型过滤）
+func (m *MemoryStore) GetGroupMembers(groupID string, memberType model.MemberType, q *model.ResourceQuery) ([]model.Member, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// 验证组是否存在
+	group, ok := m.groups[groupID]
+	if !ok {
+		return nil, 0, model.ErrNotFound
+	}
+
+	// 过滤成员
+	var filteredMembers []model.Member
+	for _, member := range group.Members {
+		if memberType == "" || member.Type == memberType {
+			filteredMembers = append(filteredMembers, member)
+		}
+	}
+
+	total := int64(len(filteredMembers))
+
+	// 分页处理
+	startIndex := q.StartIndex
+	count := q.Count
+	if startIndex < 1 {
+		startIndex = 1
+	}
+	if count <= 0 {
+		count = len(filteredMembers)
+	}
+
+	start := startIndex - 1
+	end := start + count
+	if start > len(filteredMembers) {
+		return []model.Member{}, total, nil
+	}
+	if end > len(filteredMembers) {
+		end = len(filteredMembers)
+	}
+
+	return filteredMembers[start:end], total, nil
 }
 
 // RemoveEmailFromUser 从用户中移除指定邮箱

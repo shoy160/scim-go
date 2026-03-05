@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"scim-go/model"
+	"scim-go/util"
 	"strings"
 	"time"
 
@@ -69,6 +70,32 @@ func BindQuery() gin.HandlerFunc {
 			})
 			c.Abort()
 			return
+		}
+
+		// 验证属性格式（在数据查询之前完成验证）
+		if q.Attributes != "" {
+			if err := util.ValidateAttributeFormat(q.Attributes); err != nil {
+				c.JSON(http.StatusBadRequest, model.ErrorResponse{
+					Schemas:  model.ErrorSchema.String(),
+					Detail:   "Invalid attributes format: " + err.Error(),
+					Status:   http.StatusBadRequest,
+					ScimType: "invalidSyntax",
+				})
+				c.Abort()
+				return
+			}
+		}
+		if q.ExcludedAttributes != "" {
+			if err := util.ValidateAttributeFormat(q.ExcludedAttributes); err != nil {
+				c.JSON(http.StatusBadRequest, model.ErrorResponse{
+					Schemas:  model.ErrorSchema.String(),
+					Detail:   "Invalid excludedAttributes format: " + err.Error(),
+					Status:   http.StatusBadRequest,
+					ScimType: "invalidSyntax",
+				})
+				c.Abort()
+				return
+			}
 		}
 
 		c.Set("scim_query", &q)

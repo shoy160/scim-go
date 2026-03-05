@@ -16,11 +16,11 @@ import (
 // DBStore 关系型数据库存储实现（MySQL/PG通用）
 type DBStore struct {
 	db    *gorm.DB
-	cache Cache
+	cache util.Cache
 }
 
 // NewDB 创建数据库存储实例
-func NewDB(db *gorm.DB, cache Cache) Store {
+func NewDB(db *gorm.DB, cache util.Cache) Store {
 	// 自动迁移表结构（含关联表）
 	err := db.AutoMigrate(
 		&model.User{}, &model.Email{}, &model.Role{},
@@ -34,12 +34,12 @@ func NewDB(db *gorm.DB, cache Cache) Store {
 
 // NewDBWithMemoryCache 创建带内存缓存的数据库存储实例
 func NewDBWithMemoryCache(db *gorm.DB) Store {
-	return NewDB(db, NewMemoryCache())
+	return NewDB(db, util.NewMemoryCache())
 }
 
 // NewDBWithRedisCache 创建带Redis缓存的数据库存储实例
 func NewDBWithRedisCache(db *gorm.DB, redisAddr, redisPassword string, redisDB int) Store {
-	return NewDB(db, NewRedisCache(redisAddr, redisPassword, redisDB))
+	return NewDB(db, util.NewRedisCache(redisAddr, redisPassword, redisDB))
 }
 
 // ---------------------- User 实现 ----------------------
@@ -447,152 +447,26 @@ func (d *DBStore) PatchUser(id string, ops []model.PatchOperation) error {
 			return err
 		}
 
-		// 处理 add/replace 操作，收集需要添加的 emails 和 roles
-		emailsToAdd := []model.Email{}
-		rolesToAdd := []model.Role{}
+		// 保存原始的 emails 和 roles 用于后续对比
+		originalEmails := make([]model.Email, len(u.Emails))
+		copy(originalEmails, u.Emails)
+		originalRoles := make([]model.Role, len(u.Roles))
+		copy(originalRoles, u.Roles)
 
-		for _, op := range ops {
-			if op.Op == "add" || op.Op == "replace" {
-				if op.Path == "emails" && op.Value != nil {
-					if emails, ok := op.Value.([]any); ok {
-						for _, email := range emails {
-							if emailMap, ok := email.(map[string]any); ok {
-								if emailValue, ok := emailMap["value"].(string); ok {
-									// 检查是否与数据库中已有记录重复
-									emailExists := false
-									for _, existingEmail := range u.Emails {
-										if strings.EqualFold(existingEmail.Value, emailValue) {
-											emailExists = true
-											break
-										}
-									}
-									if !emailExists {
-										emailType := ""
-										if t, ok := emailMap["type"].(string); ok {
-											emailType = t
-										}
-										primary := false
-										if p, ok := emailMap["primary"].(bool); ok {
-											primary = p
-										}
-										emailsToAdd = append(emailsToAdd, model.Email{
-											UserID:  u.ID,
-											Value:   emailValue,
-											Type:    emailType,
-											Primary: primary,
-										})
-									}
-								}
-							}
-						}
-					}
-				}
-				if op.Path == "roles" && op.Value != nil {
-					if roles, ok := op.Value.([]any); ok {
-						for _, role := range roles {
-							if roleMap, ok := role.(map[string]any); ok {
-								if roleValue, ok := roleMap["value"].(string); ok {
-									// 检查是否与数据库中已有记录重复
-									roleExists := false
-									for _, existingRole := range u.Roles {
-										if strings.EqualFold(existingRole.Value, roleValue) {
-											roleExists = true
-											break
-										}
-									}
-									if !roleExists {
-										roleType := ""
-										if t, ok := roleMap["type"].(string); ok {
-											roleType = t
-										}
-										display := ""
-										if d, ok := roleMap["display"].(string); ok {
-											display = d
-										}
-										primary := false
-										if p, ok := roleMap["primary"].(bool); ok {
-											primary = p
-										}
-										rolesToAdd = append(rolesToAdd, model.Role{
-											UserID:  u.ID,
-											Value:   roleValue,
-											Type:    roleType,
-											Display: display,
-											Primary: primary,
-										})
-									}
-								}
-							}
-						}
-					}
-				}
-			}
+		// 应用补丁操作（处理通用字段和关联字段）
+		err := PatchResource(d, id, &u, ops)
+		if err != nil {
+			return err
 		}
 
-		// 添加新的 emails 和 roles
-		if len(emailsToAdd) > 0 {
-			if err := tx.Create(&emailsToAdd).Error; err != nil {
-				return err
-			}
-			// 更新内存中的 emails
-			u.Emails = append(u.Emails, emailsToAdd...)
-		}
-		if len(rolesToAdd) > 0 {
-			if err := tx.Create(&rolesToAdd).Error; err != nil {
-				return err
-			}
-			// 更新内存中的 roles
-			u.Roles = append(u.Roles, rolesToAdd...)
+		// 处理 emails 的差异更新
+		if err := d.syncEmails(tx, id, originalEmails, u.Emails); err != nil {
+			return err
 		}
 
-		// 处理 remove 操作
-		for _, op := range ops {
-			if op.Op == "remove" {
-				if op.Path == "emails" && op.Value != nil {
-					if emails, ok := op.Value.([]any); ok {
-						for _, email := range emails {
-							if emailMap, ok := email.(map[string]any); ok {
-								if emailValue, ok := emailMap["value"].(string); ok {
-									// 从数据库中删除
-									result := tx.Where("user_id = ? AND LOWER(value) = LOWER(?)", id, emailValue).Delete(&model.Email{})
-									if result.Error != nil {
-										return result.Error
-									}
-									// 从内存中移除
-									for i, e := range u.Emails {
-										if strings.EqualFold(e.Value, emailValue) {
-											u.Emails = append(u.Emails[:i], u.Emails[i+1:]...)
-											break
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-				if op.Path == "roles" && op.Value != nil {
-					if roles, ok := op.Value.([]any); ok {
-						for _, role := range roles {
-							if roleMap, ok := role.(map[string]any); ok {
-								if roleValue, ok := roleMap["value"].(string); ok {
-									// 从数据库中删除
-									result := tx.Where("user_id = ? AND LOWER(value) = LOWER(?)", id, roleValue).Delete(&model.Role{})
-									if result.Error != nil {
-										return result.Error
-									}
-									// 从内存中移除
-									for i, r := range u.Roles {
-										if strings.EqualFold(r.Value, roleValue) {
-											u.Roles = append(u.Roles[:i], u.Roles[i+1:]...)
-											break
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
+		// 处理 roles 的差异更新
+		if err := d.syncRoles(tx, id, originalRoles, u.Roles); err != nil {
+			return err
 		}
 
 		// 更新版本号（每次更新必须变化）
@@ -602,6 +476,82 @@ func (d *DBStore) PatchUser(id string, ops []model.PatchOperation) error {
 		// 保存更新
 		return tx.Session(&gorm.Session{FullSaveAssociations: true}).Save(&u).Error
 	})
+}
+
+// syncEmails 同步 emails，仅对差异部分执行删除或新增操作
+func (d *DBStore) syncEmails(tx *gorm.DB, userID string, originalEmails, newEmails []model.Email) error {
+	// 构建原始 email 的 map，用于快速查找
+	originalMap := make(map[string]model.Email)
+	for _, email := range originalEmails {
+		originalMap[strings.ToLower(email.Value)] = email
+	}
+
+	// 构建新 email 的 map
+	newMap := make(map[string]model.Email)
+	for _, email := range newEmails {
+		newMap[strings.ToLower(email.Value)] = email
+	}
+
+	// 找出需要删除的 emails（在原始中存在但在新中不存在）
+	for key, originalEmail := range originalMap {
+		if _, exists := newMap[key]; !exists {
+			// 删除该 email
+			if err := tx.Where("user_id = ? AND LOWER(value) = LOWER(?)", userID, originalEmail.Value).Delete(&model.Email{}).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	// 找出需要新增的 emails（在新中存在但在原始中不存在）
+	for key, newEmail := range newMap {
+		if _, exists := originalMap[key]; !exists {
+			// 新增该 email
+			newEmail.UserID = userID
+			if err := tx.Create(&newEmail).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// syncRoles 同步 roles，仅对差异部分执行删除或新增操作
+func (d *DBStore) syncRoles(tx *gorm.DB, userID string, originalRoles, newRoles []model.Role) error {
+	// 构建原始 role 的 map，用于快速查找
+	originalMap := make(map[string]model.Role)
+	for _, role := range originalRoles {
+		originalMap[strings.ToLower(role.Value)] = role
+	}
+
+	// 构建新 role 的 map
+	newMap := make(map[string]model.Role)
+	for _, role := range newRoles {
+		newMap[strings.ToLower(role.Value)] = role
+	}
+
+	// 找出需要删除的 roles（在原始中存在但在新中不存在）
+	for key, originalRole := range originalMap {
+		if _, exists := newMap[key]; !exists {
+			// 删除该 role
+			if err := tx.Where("user_id = ? AND LOWER(value) = LOWER(?)", userID, originalRole.Value).Delete(&model.Role{}).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	// 找出需要新增的 roles（在新中存在但在原始中不存在）
+	for key, newRole := range newMap {
+		if _, exists := originalMap[key]; !exists {
+			// 新增该 role
+			newRole.UserID = userID
+			if err := tx.Create(&newRole).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // validateEmailsUniquenessByValues 验证 emails 是否重复（仅检查新值）
@@ -915,7 +865,13 @@ func (d *DBStore) DeleteGroup(id string) error {
 // ---------------------- Group 成员管理 ----------------------
 
 // AddMemberToGroup 添加成员到组（支持用户和组）
-func (d *DBStore) AddMemberToGroup(groupID, memberID, memberType string) error {
+func (d *DBStore) AddMemberToGroup(groupID, memberID string, memberType ...model.MemberType) error {
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
+
 	// 验证组是否存在
 	var group model.Group
 	if err := d.db.First(&group, "id = ?", groupID).Error; err != nil {
@@ -929,10 +885,10 @@ func (d *DBStore) AddMemberToGroup(groupID, memberID, memberType string) error {
 	member := model.Member{
 		GroupID: groupID,
 		Value:   memberID,
-		Type:    memberType,
+		Type:    mt,
 	}
 
-	if memberType == "User" {
+	if mt == "User" {
 		var user model.User
 		if err := d.db.First(&user, "id = ?", memberID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -945,7 +901,7 @@ func (d *DBStore) AddMemberToGroup(groupID, memberID, memberType string) error {
 		} else {
 			member.Display = user.UserName
 		}
-	} else if memberType == "Group" {
+	} else if mt == "Group" {
 		var subGroup model.Group
 		if err := d.db.First(&subGroup, "id = ?", memberID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -964,7 +920,7 @@ func (d *DBStore) AddMemberToGroup(groupID, memberID, memberType string) error {
 		Where("group_id = ? AND value = ?", groupID, memberID).
 		Count(&count)
 	if count > 0 {
-		return model.ErrUserAlreadyInGroup
+		return model.ErrMemberAlreadyInGroup
 	}
 
 	// 添加成员
@@ -979,7 +935,7 @@ func (d *DBStore) AddMemberToGroup(groupID, memberID, memberType string) error {
 		d.cache.Delete(ctx, fmt.Sprintf("group:%s:true", groupID))
 		d.cache.Delete(ctx, fmt.Sprintf("group:%s:false", groupID))
 		// 如果是用户，还需要清除用户相关的缓存
-		if memberType == "User" {
+		if mt == "User" {
 			d.cache.Delete(ctx, "user:"+memberID)
 		}
 	}
@@ -987,13 +943,14 @@ func (d *DBStore) AddMemberToGroup(groupID, memberID, memberType string) error {
 	return nil
 }
 
-// AddUserToGroup 添加用户到组
-func (d *DBStore) AddUserToGroup(groupID, userID string) error {
-	return d.AddMemberToGroup(groupID, userID, "User")
-}
-
 // RemoveMemberFromGroup 从组中移除成员（支持用户和组）
-func (d *DBStore) RemoveMemberFromGroup(groupID, memberID string) error {
+func (d *DBStore) RemoveMemberFromGroup(groupID, memberID string, memberType ...model.MemberType) error {
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
+
 	// 验证组是否存在
 	var group model.Group
 	if err := d.db.First(&group, "id = ?", groupID).Error; err != nil {
@@ -1004,15 +961,18 @@ func (d *DBStore) RemoveMemberFromGroup(groupID, memberID string) error {
 	}
 
 	// 删除成员
-	result := d.db.Table("scim_group_members").
-		Where("group_id = ? AND value = ?", groupID, memberID).
-		Delete(&model.Member{})
+	query := d.db.Table("scim_group_members").
+		Where("group_id = ? AND value = ?", groupID, memberID)
+	if mt != "" {
+		query = query.Where("type = ?", mt)
+	}
+	result := query.Delete(&model.Member{})
 	if result.Error != nil {
 		return result.Error
 	}
 
 	if result.RowsAffected == 0 {
-		return model.ErrUserNotInGroup
+		return model.ErrMemberNotInGroup
 	}
 
 	// 清除相关缓存
@@ -1022,19 +982,22 @@ func (d *DBStore) RemoveMemberFromGroup(groupID, memberID string) error {
 		d.cache.Delete(ctx, fmt.Sprintf("group:%s:true", groupID))
 		d.cache.Delete(ctx, fmt.Sprintf("group:%s:false", groupID))
 		// 清除用户相关的缓存（假设成员是用户）
-		d.cache.Delete(ctx, "user:"+memberID)
+		if mt == "User" {
+			d.cache.Delete(ctx, "user:"+memberID)
+		}
 	}
 
 	return nil
 }
 
-// RemoveUserFromGroup 从组中移除用户
-func (d *DBStore) RemoveUserFromGroup(groupID, userID string) error {
-	return d.RemoveMemberFromGroup(groupID, userID)
-}
+// IsMemberInGroup 检查成员是否在组中（支持用户和组）
+func (d *DBStore) IsMemberInGroup(groupID, memberID string, memberType ...model.MemberType) (bool, error) {
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
 
-// IsUserInGroup 检查用户是否在组中
-func (d *DBStore) IsUserInGroup(groupID, userID string) (bool, error) {
 	// 验证组是否存在
 	var group model.Group
 	if err := d.db.First(&group, "id = ?", groupID).Error; err != nil {
@@ -1045,24 +1008,80 @@ func (d *DBStore) IsUserInGroup(groupID, userID string) (bool, error) {
 	}
 
 	var count int64
-	d.db.Table("scim_group_members").
-		Where("group_id = ? AND value = ?", groupID, userID).
-		Count(&count)
+	query := d.db.Table("scim_group_members").
+		Where("group_id = ? AND value = ?", groupID, memberID)
+	if mt != "" {
+		query = query.Where("type = ?", mt)
+	}
+	query.Count(&count)
 
 	return count > 0, nil
 }
 
-// GetUserGroups 获取用户所属的所有组
-func (d *DBStore) GetUserGroups(userID string) ([]model.UserGroup, error) {
+// GetMemberGroups 获取成员所属的所有组（支持用户和组）
+func (d *DBStore) GetMemberGroups(memberID string, memberType ...model.MemberType) ([]model.UserGroup, error) {
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
+
 	var groups []model.UserGroup
-	err := d.db.Raw(`
-		SELECT g.id as value, g.display_name as display
-		FROM scim_groups g
-		JOIN scim_group_members m ON g.id = m.group_id
-		WHERE m.value = ?
-	`, userID).Scan(&groups).Error
+	var err error
+	if mt != "" {
+		err = d.db.Raw(`
+			SELECT g.id as value, g.display_name as display
+			FROM scim_groups g
+			JOIN scim_group_members m ON g.id = m.group_id
+			WHERE m.value = ? AND m.type = ?
+		`, memberID, mt).Scan(&groups).Error
+	} else {
+		err = d.db.Raw(`
+			SELECT g.id as value, g.display_name as display
+			FROM scim_groups g
+			JOIN scim_group_members m ON g.id = m.group_id
+			WHERE m.value = ?
+		`, memberID).Scan(&groups).Error
+	}
 
 	return groups, err
+}
+
+// GetGroupMembers 获取组成员（支持分页和类型过滤）
+func (d *DBStore) GetGroupMembers(groupID string, memberType model.MemberType, q *model.ResourceQuery) ([]model.Member, int64, error) {
+	var group model.Group
+	if err := d.db.First(&group, "id = ?", groupID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, 0, model.ErrNotFound
+		}
+		return nil, 0, err
+	}
+
+	var members []model.Member
+	query := d.db.Where("group_id = ?", groupID)
+	if memberType != "" {
+		query = query.Where("type = ?", memberType)
+	}
+
+	var total int64
+	query.Model(&model.Member{}).Count(&total)
+
+	startIndex := q.StartIndex
+	count := q.Count
+
+	if startIndex < 1 {
+		startIndex = 1
+	}
+	if count <= 0 {
+		count = 100
+	}
+
+	offset := startIndex - 1
+	if err := query.Offset(offset).Limit(count).Find(&members).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return members, total, nil
 }
 
 // ---------------------- 过滤器辅助方法 ----------------------

@@ -49,3 +49,4 @@ docker-compose.override.yml
 # 文档生成
 docs/swagger.json
 docs/swagger.yaml
+*_local.yaml

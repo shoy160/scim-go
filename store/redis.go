@@ -158,7 +158,13 @@ func (r *RedisStore) DeleteGroup(id string) error {
 // ---------------------- Group 成员管理 ----------------------
 
 // AddMemberToGroup 添加成员到组（支持用户和组）
-func (r *RedisStore) AddMemberToGroup(groupID, memberID, memberType string) error {
+func (r *RedisStore) AddMemberToGroup(groupID, memberID string, memberType ...model.MemberType) error {
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
+
 	// 验证组是否存在
 	group, err := r.GetGroup(groupID, false)
 	if err != nil {
@@ -166,12 +172,12 @@ func (r *RedisStore) AddMemberToGroup(groupID, memberID, memberType string) erro
 	}
 
 	// 验证成员是否存在
-	if memberType == "User" {
+	if mt == "User" {
 		_, err = r.GetUser(memberID)
 		if err != nil {
 			return err
 		}
-	} else if memberType == "Group" {
+	} else if mt == "Group" {
 		_, err = r.GetGroup(memberID, false)
 		if err != nil {
 			return err
@@ -183,7 +189,7 @@ func (r *RedisStore) AddMemberToGroup(groupID, memberID, memberType string) erro
 	// 检查成员是否已在组中
 	for _, member := range group.Members {
 		if member.Value == memberID {
-			return model.ErrUserAlreadyInGroup
+			return model.ErrMemberAlreadyInGroup
 		}
 	}
 
@@ -191,19 +197,20 @@ func (r *RedisStore) AddMemberToGroup(groupID, memberID, memberType string) erro
 	group.Members = append(group.Members, model.Member{
 		GroupID: groupID,
 		Value:   memberID,
-		Type:    memberType,
+		Type:    mt,
 	})
 
 	return r.CreateGroup(group)
 }
 
-// AddUserToGroup 添加用户到组
-func (r *RedisStore) AddUserToGroup(groupID, userID string) error {
-	return r.AddMemberToGroup(groupID, userID, "User")
-}
-
 // RemoveMemberFromGroup 从组中移除成员（支持用户和组）
-func (r *RedisStore) RemoveMemberFromGroup(groupID, memberID string) error {
+func (r *RedisStore) RemoveMemberFromGroup(groupID, memberID string, memberType ...model.MemberType) error {
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
+
 	// 验证组是否存在
 	group, err := r.GetGroup(groupID, false)
 	if err != nil {
@@ -214,7 +221,11 @@ func (r *RedisStore) RemoveMemberFromGroup(groupID, memberID string) error {
 	found := false
 	var newMembers []model.Member
 	for _, member := range group.Members {
-		if member.Value == memberID {
+		memberType := member.Type
+		if memberType == "" {
+			memberType = model.MemberTypeUser
+		}
+		if member.Value == memberID && (mt == "" || memberType == mt) {
 			found = true
 		} else {
 			newMembers = append(newMembers, member)
@@ -222,27 +233,70 @@ func (r *RedisStore) RemoveMemberFromGroup(groupID, memberID string) error {
 	}
 
 	if !found {
-		return model.ErrUserNotInGroup
+		return model.ErrMemberNotInGroup
 	}
 
 	group.Members = newMembers
 	return r.CreateGroup(group)
 }
 
-// RemoveUserFromGroup 从组中移除用户
-func (r *RedisStore) RemoveUserFromGroup(groupID, userID string) error {
-	return r.RemoveMemberFromGroup(groupID, userID)
+// GetGroupMembers 获取组成员（支持分页和类型过滤）
+func (r *RedisStore) GetGroupMembers(groupID string, memberType model.MemberType, q *model.ResourceQuery) ([]model.Member, int64, error) {
+	group, err := r.GetGroup(groupID, false)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var filteredMembers []model.Member
+	for _, member := range group.Members {
+		if memberType == "" || member.Type == memberType {
+			filteredMembers = append(filteredMembers, member)
+		}
+	}
+
+	total := int64(len(filteredMembers))
+
+	startIndex := q.StartIndex
+	count := q.Count
+
+	if startIndex < 1 {
+		startIndex = 1
+	}
+	if count <= 0 {
+		count = len(filteredMembers)
+	}
+
+	start := startIndex - 1
+	end := start + count
+	if start > len(filteredMembers) {
+		return []model.Member{}, total, nil
+	}
+	if end > len(filteredMembers) {
+		end = len(filteredMembers)
+	}
+
+	return filteredMembers[start:end], total, nil
 }
 
-// IsUserInGroup 检查用户是否在组中
-func (r *RedisStore) IsUserInGroup(groupID, userID string) (bool, error) {
+// IsMemberInGroup 检查成员是否在组中（支持用户和组）
+func (r *RedisStore) IsMemberInGroup(groupID, memberID string, memberType ...model.MemberType) (bool, error) {
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
+
 	group, err := r.GetGroup(groupID, false)
 	if err != nil {
 		return false, err
 	}
 
 	for _, member := range group.Members {
-		if member.Value == userID {
+		memberType := member.Type
+		if memberType == "" {
+			memberType = model.MemberTypeUser
+		}
+		if member.Value == memberID && (mt == "" || memberType == mt) {
 			return true, nil
 		}
 	}
@@ -250,8 +304,14 @@ func (r *RedisStore) IsUserInGroup(groupID, userID string) (bool, error) {
 	return false, nil
 }
 
-// GetUserGroups 获取用户所属的所有组
-func (r *RedisStore) GetUserGroups(userID string) ([]model.UserGroup, error) {
+// GetMemberGroups 获取成员所属的所有组（支持用户和组）
+func (r *RedisStore) GetMemberGroups(memberID string, memberType ...model.MemberType) ([]model.UserGroup, error) {
+	// 处理默认参数
+	mt := model.MemberTypeUser
+	if len(memberType) > 0 && memberType[0] != "" {
+		mt = memberType[0]
+	}
+
 	keys, err := r.cli.Keys(r.ctx, prefixGroup+"*").Result()
 	if err != nil {
 		return nil, err
@@ -269,7 +329,11 @@ func (r *RedisStore) GetUserGroups(userID string) ([]model.UserGroup, error) {
 		}
 
 		for _, member := range g.Members {
-			if member.Value == userID {
+			memberType := member.Type
+			if memberType == "" {
+				memberType = "User"
+			}
+			if member.Value == memberID && (mt == "" || memberType == mt) {
 				groups = append(groups, model.UserGroup{
 					Value:   g.ID,
 					Display: g.DisplayName,

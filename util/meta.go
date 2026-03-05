@@ -1,74 +1,74 @@
 package util
 
 import (
-	"crypto/md5"
+	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"scim-go/model"
 	"time"
 )
 
-// GenerateUserMeta 生成用户的 meta 属性
-func GenerateUserMeta(baseURL, userID string, createdAt, updatedAt time.Time) model.Meta {
-	location := fmt.Sprintf("%s/Users/%s", baseURL, userID)
-	created := createdAt.Format(time.RFC3339)
-	lastModified := updatedAt.Format(time.RFC3339)
-	version := generateVersion(userID, lastModified)
-
-	return model.Meta{
-		Created:      created,
-		LastModified: lastModified,
-		Location:     location,
-		ResourceType: "User",
-		Version:      version,
-	}
-}
-
-// GenerateGroupMeta 生成组的 meta 属性
-func GenerateGroupMeta(baseURL, groupID string, createdAt, updatedAt time.Time) model.Meta {
-	location := fmt.Sprintf("%s/Groups/%s", baseURL, groupID)
-	created := createdAt.Format(time.RFC3339)
-	lastModified := updatedAt.Format(time.RFC3339)
-	version := generateVersion(groupID, lastModified)
-
-	return model.Meta{
-		Created:      created,
-		LastModified: lastModified,
-		Location:     location,
-		ResourceType: "Group",
-		Version:      version,
-	}
-}
-
-// UpdateMeta 更新 meta 属性的最后修改时间和版本
-func UpdateMeta(meta *model.Meta, baseURL, resourceID, resourceType string) {
-	now := time.Now()
-	lastModified := now.Format(time.RFC3339)
-	location := fmt.Sprintf("%s/%s/%s", baseURL, resourceType, resourceID)
-	version := generateVersion(resourceID, lastModified)
-
-	meta.LastModified = lastModified
-	meta.Location = location
-	meta.Version = version
-	if meta.ResourceType == "" {
-		meta.ResourceType = resourceType
-	}
-}
-
-// GenerateVersion 生成版本标识
+// GenerateVersion 生成 SCIM 版本标识符（ETag 格式）
 func GenerateVersion() string {
-	// 使用当前时间生成版本标识（使用纳秒精度确保唯一性）
-	now := time.Now().Format(time.RFC3339Nano)
-	hash := md5.Sum([]byte(now))
-	hashStr := hex.EncodeToString(hash[:])
-	return fmt.Sprintf("W/\"%s\"", hashStr)
+	// 使用当前时间戳生成唯一版本标识
+	timestamp := time.Now().UnixNano()
+	hash := sha1.New()
+	hash.Write([]byte(fmt.Sprintf("%d", timestamp)))
+	return fmt.Sprintf("W/\"%s\"", hex.EncodeToString(hash.Sum(nil)))
 }
 
-// generateVersion 生成版本标识（内部使用）
-func generateVersion(resourceID, lastModified string) string {
-	// 使用资源ID和最后修改时间生成MD5哈希作为版本标识
-	data := resourceID + lastModified
-	hash := md5.Sum([]byte(data))
-	hashStr := hex.EncodeToString(hash[:])
-	return fmt.Sprintf("W/\"%s\"", hashStr)
+// PopulateMeta 填充通用meta数据
+func PopulateMeta(resourceType string, id string, createdAt, updatedAt time.Time, version string, baseURL string, apiPath string) model.Meta {
+	meta := model.Meta{
+		ResourceType: resourceType,
+		Version:      version,
+	}
+
+	// 从数据库时间戳生成 ISO 8601 格式时间（使用纳秒精度）
+	if !createdAt.IsZero() {
+		meta.Created = createdAt.Format("2006-01-02T15:04:05.999999999Z07:00")
+	}
+	if !updatedAt.IsZero() {
+		meta.LastModified = updatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")
+	}
+
+	// 动态生成 location
+	meta.Location = baseURL + apiPath + "/" + resourceType + "s/" + id
+
+	return meta
+}
+
+// GenerateUserMeta 生成用户meta数据
+func GenerateUserMeta(baseURL string, userID string, createdAt, updatedAt time.Time) model.Meta {
+	return PopulateMeta("User", userID, createdAt, updatedAt, GenerateVersion(), baseURL, "/scim/v2")
+}
+
+// GenerateGroupMeta 生成组meta数据
+func GenerateGroupMeta(baseURL string, groupID string, createdAt, updatedAt time.Time) model.Meta {
+	return PopulateMeta("Group", groupID, createdAt, updatedAt, GenerateVersion(), baseURL, "/scim/v2")
+}
+
+// UpdateMeta 更新meta数据
+func UpdateMeta(meta *model.Meta, baseURL string, id string, resourceType string) {
+	meta.LastModified = time.Now().Format("2006-01-02T15:04:05.999999999Z07:00")
+	meta.Version = GenerateVersion()
+	meta.Location = baseURL + "/scim/v2/" + resourceType + "s/" + id
+}
+
+// GenerateMemberRef 生成成员的$ref属性
+func GenerateMemberRef(member *model.Member, baseURL string, apiPath string) {
+	if member.Type == "Group" {
+		member.Ref = baseURL + apiPath + "/Groups/" + member.Value
+	} else {
+		// 默认类型为 User
+		member.Type = "User"
+		member.Ref = baseURL + apiPath + "/Users/" + member.Value
+	}
+}
+
+// GenerateMembersRef 生成多个成员的$ref属性
+func GenerateMembersRef(members []model.Member, baseURL string, apiPath string) {
+	for i := range members {
+		GenerateMemberRef(&members[i], baseURL, apiPath)
+	}
 }

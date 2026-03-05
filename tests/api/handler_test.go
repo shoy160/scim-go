@@ -24,6 +24,7 @@ func setupTestRouter() (*gin.Engine, store.Store) {
 		GroupSchema:   model.GroupSchema.String(),
 		ErrorSchema:   model.ErrorSchema.String(),
 		ListSchema:    model.ListSchema.String(),
+		APIPath:       "/scim/v2",
 		DefaultCount:  20,
 		MaxCount:      100,
 	}
@@ -616,7 +617,7 @@ func TestGroupMemberManagement(t *testing.T) {
 	})
 
 	// 添加第二个用户
-	store.AddUserToGroup(createdGroup.ID, createdUser2.ID)
+	store.AddMemberToGroup(createdGroup.ID, createdUser2.ID, "User")
 
 	t.Run("Remove User from Group", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/scim/v2/Groups/"+createdGroup.ID+"/members/"+createdUser1.ID, nil)
@@ -630,7 +631,7 @@ func TestGroupMemberManagement(t *testing.T) {
 		}
 
 		// 验证用户已移除
-		inGroup, _ := store.IsUserInGroup(createdGroup.ID, createdUser1.ID)
+		inGroup, _ := store.IsMemberInGroup(createdGroup.ID, createdUser1.ID)
 		if inGroup {
 			t.Error("User should not be in group after removal")
 		}
@@ -736,8 +737,8 @@ func TestUserAttributesGroups(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &createdGroup)
 
 	// 添加用户到组
-	store.AddUserToGroup(createdGroup.ID, createdUser1.ID)
-	store.AddUserToGroup(createdGroup.ID, createdUser2.ID)
+	store.AddMemberToGroup(createdGroup.ID, createdUser1.ID, "User")
+	store.AddMemberToGroup(createdGroup.ID, createdUser2.ID, "User")
 
 	t.Run("List Users with attributes=groups", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/scim/v2/Users?attributes=groups", nil)

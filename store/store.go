@@ -39,14 +39,13 @@ type Store interface {
 	DeleteGroup(id string) error
 
 	// ---------------------- Group 成员管理 ----------------------
-	AddUserToGroup(groupID, userID string) error                 // 添加用户到组
-	RemoveUserFromGroup(groupID, userID string) error            // 从组中移除用户
-	IsUserInGroup(groupID, userID string) (bool, error)          // 检查用户是否在组中
-	AddMemberToGroup(groupID, memberID, memberType string) error // 添加成员到组（支持用户和组）
-	RemoveMemberFromGroup(groupID, memberID string) error        // 从组中移除成员（支持用户和组）
+	IsMemberInGroup(groupID, memberID string, memberType ...model.MemberType) (bool, error)                             // 检查成员是否在组中（支持用户和组）
+	AddMemberToGroup(groupID, memberID string, memberType ...model.MemberType) error                                    // 添加成员到组（支持用户和组）
+	RemoveMemberFromGroup(groupID, memberID string, memberType ...model.MemberType) error                               // 从组中移除成员（支持用户和组）
+	GetGroupMembers(groupID string, memberType model.MemberType, q *model.ResourceQuery) ([]model.Member, int64, error) // 获取组成员（支持分页和类型过滤）
 
 	// ---------------------- 反向查询 ----------------------
-	GetUserGroups(userID string) ([]model.UserGroup, error) // 获取用户所属的所有组
+	GetMemberGroups(memberID string, memberType ...model.MemberType) ([]model.UserGroup, error) // 获取成员所属的所有组（支持用户和组）
 
 	// ---------------------- Email/Role 管理 ----------------------
 	RemoveEmailFromUser(userID, emailValue string) error // 从用户中移除指定邮箱
@@ -147,10 +146,12 @@ func handleAddMembers(s Store, groupID string, value any) error {
 		if !ok {
 			return fmt.Errorf("member value must be a string")
 		}
-		memberType := "User" // 默认类型
+		memberType := model.MemberTypeUser // 默认类型
 		if t, ok := memberMap["type"]; ok {
 			if typeStr, ok := t.(string); ok {
-				memberType = typeStr
+				if typeStr == "Group" {
+					memberType = model.MemberTypeGroup
+				}
 			}
 		}
 		if err := s.AddMemberToGroup(groupID, memberID, memberType); err != nil {
@@ -182,7 +183,7 @@ func handleAddGroups(s Store, userID string, value any) error {
 		if !ok {
 			return fmt.Errorf("group value must be a string")
 		}
-		if err := s.AddUserToGroup(groupID, userID); err != nil {
+		if err := s.AddMemberToGroup(groupID, userID, model.MemberTypeUser); err != nil {
 			return fmt.Errorf("failed to add user to group %s: %w", groupID, err)
 		}
 	}
@@ -268,11 +269,44 @@ func handleRemoveGroups(s Store, userID string, value any) error {
 		if !ok {
 			return fmt.Errorf("group value must be a string")
 		}
-		if err := s.RemoveUserFromGroup(groupID, userID); err != nil {
+		if err := s.RemoveMemberFromGroup(groupID, userID); err != nil {
 			return fmt.Errorf("failed to remove user from group %s: %w", groupID, err)
 		}
 	}
 	return nil
+}
+
+// parseEmail 解析单个email对象
+func parseEmail(email any, userID string) (model.Email, error) {
+	emailMap, ok := email.(map[string]any)
+	if !ok {
+		return model.Email{}, fmt.Errorf("email must be an object")
+	}
+	emailValueVal, ok := emailMap["value"]
+	if !ok {
+		return model.Email{}, fmt.Errorf("email must have a value field")
+	}
+	emailValue, ok := emailValueVal.(string)
+	if !ok {
+		return model.Email{}, fmt.Errorf("email value must be a string")
+	}
+	if err := util.ValidateEmailFormat(emailValue); err != nil {
+		return model.Email{}, fmt.Errorf("invalid email format: %w", err)
+	}
+	emailType := "work"
+	if t, ok := emailMap["type"].(string); ok {
+		emailType = t
+	}
+	primary := false
+	if p, ok := emailMap["primary"].(bool); ok {
+		primary = p
+	}
+	return model.Email{
+		UserID:  userID,
+		Value:   emailValue,
+		Type:    emailType,
+		Primary: primary,
+	}, nil
 }
 
 // handleAddEmails 处理添加 emails 到用户
@@ -289,35 +323,11 @@ func handleAddEmails(data any, value any) error {
 		return fmt.Errorf("data must be a User pointer")
 	}
 	for _, email := range emails {
-		emailMap, ok := email.(map[string]any)
-		if !ok {
-			return fmt.Errorf("email must be an object")
+		parsedEmail, err := parseEmail(email, user.ID)
+		if err != nil {
+			return err
 		}
-		emailValueVal, ok := emailMap["value"]
-		if !ok {
-			return fmt.Errorf("email must have a value field")
-		}
-		emailValue, ok := emailValueVal.(string)
-		if !ok {
-			return fmt.Errorf("email value must be a string")
-		}
-		if err := util.ValidateEmailFormat(emailValue); err != nil {
-			return fmt.Errorf("invalid email format: %w", err)
-		}
-		emailType := "work"
-		if t, ok := emailMap["type"].(string); ok {
-			emailType = t
-		}
-		primary := false
-		if p, ok := emailMap["primary"].(bool); ok {
-			primary = p
-		}
-		user.Emails = append(user.Emails, model.Email{
-			UserID:  user.ID,
-			Value:   emailValue,
-			Type:    emailType,
-			Primary: primary,
-		})
+		user.Emails = append(user.Emails, parsedEmail)
 	}
 	return nil
 }
@@ -337,37 +347,51 @@ func handleReplaceEmails(data any, value any) error {
 	}
 	user.Emails = make([]model.Email, 0, len(emails))
 	for _, email := range emails {
-		emailMap, ok := email.(map[string]any)
-		if !ok {
-			return fmt.Errorf("email must be an object")
+		parsedEmail, err := parseEmail(email, user.ID)
+		if err != nil {
+			return err
 		}
-		emailValueVal, ok := emailMap["value"]
-		if !ok {
-			return fmt.Errorf("email must have a value field")
-		}
-		emailValue, ok := emailValueVal.(string)
-		if !ok {
-			return fmt.Errorf("email value must be a string")
-		}
-		if err := util.ValidateEmailFormat(emailValue); err != nil {
-			return fmt.Errorf("invalid email format: %w", err)
-		}
-		emailType := "work"
-		if t, ok := emailMap["type"].(string); ok {
-			emailType = t
-		}
-		primary := false
-		if p, ok := emailMap["primary"].(bool); ok {
-			primary = p
-		}
-		user.Emails = append(user.Emails, model.Email{
-			UserID:  user.ID,
-			Value:   emailValue,
-			Type:    emailType,
-			Primary: primary,
-		})
+		user.Emails = append(user.Emails, parsedEmail)
 	}
 	return nil
+}
+
+// parseRole 解析单个role对象
+func parseRole(role any, userID string) (model.Role, error) {
+	roleMap, ok := role.(map[string]any)
+	if !ok {
+		return model.Role{}, fmt.Errorf("role must be an object")
+	}
+	roleValueVal, ok := roleMap["value"]
+	if !ok {
+		return model.Role{}, fmt.Errorf("role must have a value field")
+	}
+	roleValue, ok := roleValueVal.(string)
+	if !ok {
+		return model.Role{}, fmt.Errorf("role value must be a string")
+	}
+	if err := util.ValidateRoleDefinition(roleValue); err != nil {
+		return model.Role{}, fmt.Errorf("invalid role definition: %w", err)
+	}
+	roleType := ""
+	if t, ok := roleMap["type"].(string); ok {
+		roleType = t
+	}
+	display := ""
+	if d, ok := roleMap["display"].(string); ok {
+		display = d
+	}
+	primary := false
+	if p, ok := roleMap["primary"].(bool); ok {
+		primary = p
+	}
+	return model.Role{
+		UserID:  userID,
+		Value:   roleValue,
+		Type:    roleType,
+		Display: display,
+		Primary: primary,
+	}, nil
 }
 
 // handleAddRoles 处理添加 roles 到用户
@@ -384,40 +408,11 @@ func handleAddRoles(data any, value any) error {
 		return fmt.Errorf("data must be a User pointer")
 	}
 	for _, role := range roles {
-		roleMap, ok := role.(map[string]any)
-		if !ok {
-			return fmt.Errorf("role must be an object")
+		parsedRole, err := parseRole(role, user.ID)
+		if err != nil {
+			return err
 		}
-		roleValueVal, ok := roleMap["value"]
-		if !ok {
-			return fmt.Errorf("role must have a value field")
-		}
-		roleValue, ok := roleValueVal.(string)
-		if !ok {
-			return fmt.Errorf("role value must be a string")
-		}
-		if err := util.ValidateRoleDefinition(roleValue); err != nil {
-			return fmt.Errorf("invalid role definition: %w", err)
-		}
-		roleType := ""
-		if t, ok := roleMap["type"].(string); ok {
-			roleType = t
-		}
-		display := ""
-		if d, ok := roleMap["display"].(string); ok {
-			display = d
-		}
-		primary := false
-		if p, ok := roleMap["primary"].(bool); ok {
-			primary = p
-		}
-		user.Roles = append(user.Roles, model.Role{
-			UserID:  user.ID,
-			Value:   roleValue,
-			Type:    roleType,
-			Display: display,
-			Primary: primary,
-		})
+		user.Roles = append(user.Roles, parsedRole)
 	}
 	return nil
 }
@@ -437,40 +432,11 @@ func handleReplaceRoles(data any, value any) error {
 	}
 	user.Roles = make([]model.Role, 0, len(roles))
 	for _, role := range roles {
-		roleMap, ok := role.(map[string]any)
-		if !ok {
-			return fmt.Errorf("role must be an object")
+		parsedRole, err := parseRole(role, user.ID)
+		if err != nil {
+			return err
 		}
-		roleValueVal, ok := roleMap["value"]
-		if !ok {
-			return fmt.Errorf("role must have a value field")
-		}
-		roleValue, ok := roleValueVal.(string)
-		if !ok {
-			return fmt.Errorf("role value must be a string")
-		}
-		if err := util.ValidateRoleDefinition(roleValue); err != nil {
-			return fmt.Errorf("invalid role definition: %w", err)
-		}
-		roleType := ""
-		if t, ok := roleMap["type"].(string); ok {
-			roleType = t
-		}
-		display := ""
-		if d, ok := roleMap["display"].(string); ok {
-			display = d
-		}
-		primary := false
-		if p, ok := roleMap["primary"].(bool); ok {
-			primary = p
-		}
-		user.Roles = append(user.Roles, model.Role{
-			UserID:  user.ID,
-			Value:   roleValue,
-			Type:    roleType,
-			Display: display,
-			Primary: primary,
-		})
+		user.Roles = append(user.Roles, parsedRole)
 	}
 	return nil
 }
