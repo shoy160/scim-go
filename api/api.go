@@ -173,6 +173,12 @@ func (reg *RouteRegistrar) registerScimRoutes() {
 	// 注册User和Group路由
 	reg.registerUserRoutes(scimGroup)
 	reg.registerGroupRoutes(scimGroup)
+
+	// 注册自定义资源类型路由
+	reg.registerCustomResourceTypesRoutes(scimGroup)
+
+	// 注册自定义资源路由（放在最后，避免影响其他路由）
+	reg.registerCustomResourcesRoutes(scimGroup)
 }
 
 // registerResourceTypesRoutes 注册ResourceTypes路由
@@ -197,10 +203,43 @@ func (reg *RouteRegistrar) registerResourceTypesRoutes(scimGroup *gin.RouterGrou
 			Location:     baseURL + reg.cfg.APIPath + "/ResourceTypes/Group",
 		}
 
+		// 获取自定义资源类型
+		customResourceTypes, err := reg.store.ListCustomResourceTypes()
+		if err != nil {
+			ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
+			return
+		}
+
+		// 构建完整的自定义ResourceType对象
+		for i := range customResourceTypes {
+			crt := &customResourceTypes[i]
+			crt.Endpoint = baseURL + reg.cfg.APIPath + crt.Endpoint
+			crt.Meta = &model.Meta{
+				ResourceType: "ResourceType",
+				Location:     baseURL + reg.cfg.APIPath + "/ResourceTypes/" + crt.ID,
+			}
+		}
+
+		// 合并所有资源类型
 		resourceTypes := []model.ResourceType{
 			*userResourceType,
 			*groupResourceType,
 		}
+		// 将自定义资源类型转换为ResourceType并添加到列表
+		for _, crt := range customResourceTypes {
+			resourceType := model.ResourceType{
+				Schemas:          crt.Schemas,
+				ID:               crt.ID,
+				Name:             crt.Name,
+				Endpoint:         crt.Endpoint,
+				Description:      crt.Description,
+				Schema:           crt.Schema,
+				SchemaExtensions: crt.SchemaExtensions,
+				Meta:             crt.Meta,
+			}
+			resourceTypes = append(resourceTypes, resourceType)
+		}
+
 		c.JSON(http.StatusOK, model.ListResponse{
 			Schemas:      []string{model.ListSchema.String()},
 			TotalResults: len(resourceTypes),
@@ -231,9 +270,58 @@ func (reg *RouteRegistrar) registerResourceTypesRoutes(scimGroup *gin.RouterGrou
 			}
 			c.JSON(http.StatusOK, resourceType)
 		default:
-			ErrorHandler(c, model.ErrNotFound, http.StatusNotFound, "notFound")
+			// 尝试获取自定义资源类型
+			crt, err := reg.store.GetCustomResourceType(id)
+			if err != nil {
+				ErrorHandler(c, err, http.StatusNotFound, "notFound")
+				return
+			}
+			// 构建完整的自定义ResourceType对象
+			crt.Endpoint = baseURL + reg.cfg.APIPath + crt.Endpoint
+			crt.Meta = &model.Meta{
+				ResourceType: "ResourceType",
+				Location:     baseURL + reg.cfg.APIPath + "/ResourceTypes/" + crt.ID,
+			}
+			// 转换为ResourceType并返回
+			resourceType := model.ResourceType{
+				Schemas:          crt.Schemas,
+				ID:               crt.ID,
+				Name:             crt.Name,
+				Endpoint:         crt.Endpoint,
+				Description:      crt.Description,
+				Schema:           crt.Schema,
+				SchemaExtensions: crt.SchemaExtensions,
+				Meta:             crt.Meta,
+			}
+			c.JSON(http.StatusOK, resourceType)
 		}
 	})
+}
+
+// registerCustomResourceTypesRoutes 注册自定义资源类型的CRUD路由
+func (reg *RouteRegistrar) registerCustomResourceTypesRoutes(scimGroup *gin.RouterGroup) {
+	// 自定义资源类型管理端点
+	customResourceTypesGroup := scimGroup.Group("/CustomResourceTypes")
+
+	// 注册自定义资源类型的CRUD路由
+	customResourceTypesGroup.POST("", reg.createCustomResourceType)
+	customResourceTypesGroup.GET("/:id", reg.getCustomResourceType)
+	customResourceTypesGroup.GET("", reg.listCustomResourceTypes)
+	customResourceTypesGroup.PUT("/:id", reg.updateCustomResourceType)
+	customResourceTypesGroup.DELETE("/:id", reg.deleteCustomResourceType)
+}
+
+// registerCustomResourcesRoutes 注册自定义资源的CRUD路由
+func (reg *RouteRegistrar) registerCustomResourcesRoutes(scimGroup *gin.RouterGroup) {
+	// 动态注册自定义资源路由 - 使用参数路由而不是通配符路由
+
+	// 注册自定义资源的CRUD路由
+	scimGroup.GET("/:resourceType", reg.listCustomResources)
+	scimGroup.POST("/:resourceType", reg.createCustomResource)
+	scimGroup.GET("/:resourceType/:resourceID", reg.getCustomResource)
+	scimGroup.PUT("/:resourceType/:resourceID", reg.updateCustomResource)
+	scimGroup.PATCH("/:resourceType/:resourceID", reg.patchCustomResource)
+	scimGroup.DELETE("/:resourceType/:resourceID", reg.deleteCustomResource)
 }
 
 // getBaseURL 获取完整的基础URL
@@ -252,6 +340,7 @@ func (reg *RouteRegistrar) registerSchemasRoutes(scimGroup *gin.RouterGroup) {
 		schemas := []model.Schema{
 			*model.GetUserSchema(),
 			*model.GetGroupSchema(),
+			*model.GetEnterpriseUserExtensionSchema(),
 		}
 		c.JSON(http.StatusOK, model.ListResponse{
 			Schemas:      []string{model.ListSchema.String()},
@@ -267,6 +356,8 @@ func (reg *RouteRegistrar) registerSchemasRoutes(scimGroup *gin.RouterGroup) {
 			c.JSON(http.StatusOK, model.GetUserSchema())
 		case model.GroupSchema.String():
 			c.JSON(http.StatusOK, model.GetGroupSchema())
+		case model.EnterpriseUserSchema.String():
+			c.JSON(http.StatusOK, model.GetEnterpriseUserExtensionSchema())
 		default:
 			ErrorHandler(c, model.ErrNotFound, http.StatusNotFound, "notFound")
 		}

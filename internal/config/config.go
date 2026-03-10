@@ -46,6 +46,11 @@ type Config struct {
 		Enabled bool   `yaml:"enabled"`
 		Path    string `yaml:"path"`
 	} `yaml:"swagger"`
+
+	TimePrecision struct {
+		Level  string `yaml:"level"`
+		Format string `yaml:"format"`
+	} `yaml:"time_precision"`
 }
 
 // ConfigManager 配置管理器
@@ -200,6 +205,11 @@ func LoadConfig(path string) (Config, bool) {
 	// Swagger 配置
 	globalCfg.Swagger.Enabled = cm.GetBool("SWAGGER_ENABLED", globalCfg.Swagger.Enabled)
 	globalCfg.Swagger.Path = cm.GetString("SWAGGER_PATH", globalCfg.Swagger.Path)
+
+	// 时间精确度配置
+	globalCfg.TimePrecision.Level = cm.GetStringWithOptions("TIME_PRECISION_LEVEL", globalCfg.TimePrecision.Level, []string{"second", "minute", "millisecond", "microsecond", "nanosecond"})
+	globalCfg.TimePrecision.Format = cm.GetString("TIME_PRECISION_FORMAT", globalCfg.TimePrecision.Format)
+
 	// 测试模式：打印配置并退出
 	if os.Getenv("TEST_ENV") == "true" {
 		log.Println("=== 测试配置管理器 ===")

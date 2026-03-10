@@ -1,7 +1,6 @@
 package api
 
 import (
-	"net/http"
 	"scim-go/util"
 
 	"github.com/gin-gonic/gin"
@@ -22,7 +21,6 @@ func ValidateFilter(c *gin.Context, filter string, errorHandler func(*gin.Contex
 	}
 
 	if err := util.ValidateFilter(filter); err != nil {
-		errorHandler(c, err, http.StatusBadRequest, "invalidFilter")
 		return err
 	}
 

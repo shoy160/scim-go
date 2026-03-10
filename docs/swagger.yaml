@@ -1,5 +1,61 @@
 basePath: /scim/v2
 definitions:
+  model.CustomResource:
+    description: 自定义资源数据定义
+    properties:
+      attributes:
+        additionalProperties: {}
+        description: 存储自定义资源的属性
+        type: object
+      createdAt:
+        type: string
+      externalId:
+        type: string
+      id:
+        type: string
+      meta:
+        $ref: '#/definitions/model.Meta'
+      resourceType:
+        description: 关联到 CustomResourceType 的 ID
+        type: string
+      schemas:
+        items:
+          type: string
+        type: array
+      updatedAt:
+        type: string
+      version:
+        type: string
+    type: object
+  model.CustomResourceType:
+    description: 自定义资源类型定义
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      endpoint:
+        type: string
+      id:
+        type: string
+      meta:
+        $ref: '#/definitions/model.Meta'
+      name:
+        type: string
+      schema:
+        description: 自定义资源的 schema URI
+        type: string
+      schemaExtensions:
+        items:
+          $ref: '#/definitions/model.SchemaExtension'
+        type: array
+      schemas:
+        items:
+          type: string
+        type: array
+      updatedAt:
+        type: string
+    type: object
   model.Email:
     properties:
       primary:
@@ -153,6 +209,13 @@ definitions:
         type: string
       value:
         description: 角色值
+        type: string
+    type: object
+  model.SchemaExtension:
+    properties:
+      required:
+        type: boolean
+      schema:
         type: string
     type: object
   model.User:
@@ -536,19 +599,25 @@ paths:
     post:
       consumes:
       - application/json
-      description: 将用户添加到指定组
+      description: 将一个或多个成员添加到指定组
       parameters:
       - description: 组ID
         in: path
         name: id
         required: true
         type: string
-      - description: 成员信息
+      - description: 单个成员信息
         in: body
         name: member
-        required: true
         schema:
           $ref: '#/definitions/model.Member'
+      - description: 成员信息数组
+        in: body
+        name: members
+        schema:
+          items:
+            $ref: '#/definitions/model.Member'
+          type: array
       produces:
       - application/json
       responses:
@@ -565,7 +634,7 @@ paths:
           schema:
             $ref: '#/definitions/model.ErrorResponse'
         "404":
-          description: 组或用户不存在
+          description: 组或成员不存在
           schema:
             $ref: '#/definitions/model.ErrorResponse'
         "500":
@@ -574,21 +643,21 @@ paths:
             $ref: '#/definitions/model.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: 添加用户到组
+      summary: 添加成员到组
       tags:
       - Groups
   /Groups/{id}/members/{userId}:
     delete:
       consumes:
       - application/json
-      description: 将用户从指定组中移除
+      description: 将成员从指定组中移除
       parameters:
       - description: 组ID
         in: path
         name: id
         required: true
         type: string
-      - description: 用户ID
+      - description: 成员ID
         in: path
         name: userId
         required: true
@@ -603,7 +672,7 @@ paths:
           schema:
             $ref: '#/definitions/model.ErrorResponse'
         "404":
-          description: 组或用户不存在
+          description: 组或成员不存在
           schema:
             $ref: '#/definitions/model.ErrorResponse'
         "500":
@@ -612,7 +681,7 @@ paths:
             $ref: '#/definitions/model.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: 从组中移除用户
+      summary: 从组中移除成员
       tags:
       - Groups
   /Users:
@@ -869,6 +938,407 @@ paths:
       summary: 全量更新用户
       tags:
       - Users
+  /scim/v2/{resourceType}:
+    get:
+      consumes:
+      - application/json
+      description: 获取指定类型的自定义资源列表，支持分页和过滤
+      parameters:
+      - description: 资源类型
+        in: path
+        name: resourceType
+        required: true
+        type: string
+      - description: 起始索引
+        in: query
+        name: startIndex
+        type: integer
+      - description: 每页数量
+        in: query
+        name: count
+        type: integer
+      - description: 过滤条件
+        in: query
+        name: filter
+        type: string
+      - description: 排序字段
+        in: query
+        name: sortBy
+        type: string
+      - description: 排序顺序
+        in: query
+        name: sortOrder
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.ListResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 列出自定义资源
+      tags:
+      - CustomResources
+    post:
+      consumes:
+      - application/json
+      description: 创建新的自定义资源
+      parameters:
+      - description: 资源类型
+        in: path
+        name: resourceType
+        required: true
+        type: string
+      - description: 自定义资源信息
+        in: body
+        name: customResource
+        required: true
+        schema:
+          $ref: '#/definitions/model.CustomResource'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/model.CustomResource'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 创建自定义资源
+      tags:
+      - CustomResources
+  /scim/v2/{resourceType}/{resourceID}:
+    delete:
+      consumes:
+      - application/json
+      description: 根据ID删除自定义资源
+      parameters:
+      - description: 资源类型
+        in: path
+        name: resourceType
+        required: true
+        type: string
+      - description: 资源ID
+        in: path
+        name: resourceID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+          schema:
+            $ref: '#/definitions/model.CustomResource'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 删除自定义资源
+      tags:
+      - CustomResources
+    get:
+      consumes:
+      - application/json
+      description: 根据ID获取自定义资源的详细信息
+      parameters:
+      - description: 资源类型
+        in: path
+        name: resourceType
+        required: true
+        type: string
+      - description: 资源ID
+        in: path
+        name: resourceID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.CustomResource'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 获取自定义资源
+      tags:
+      - CustomResources
+    patch:
+      consumes:
+      - application/json
+      description: 使用补丁操作更新自定义资源的部分属性
+      parameters:
+      - description: 资源类型
+        in: path
+        name: resourceType
+        required: true
+        type: string
+      - description: 资源ID
+        in: path
+        name: resourceID
+        required: true
+        type: string
+      - description: 补丁操作
+        in: body
+        name: patch
+        required: true
+        schema:
+          items:
+            $ref: '#/definitions/model.PatchOperation'
+          type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.CustomResource'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 补丁更新自定义资源
+      tags:
+      - CustomResources
+    put:
+      consumes:
+      - application/json
+      description: 更新现有的自定义资源信息
+      parameters:
+      - description: 资源类型
+        in: path
+        name: resourceType
+        required: true
+        type: string
+      - description: 资源ID
+        in: path
+        name: resourceID
+        required: true
+        type: string
+      - description: 自定义资源信息
+        in: body
+        name: customResource
+        required: true
+        schema:
+          $ref: '#/definitions/model.CustomResource'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.CustomResource'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 更新自定义资源
+      tags:
+      - CustomResources
+  /scim/v2/CustomResourceTypes:
+    get:
+      consumes:
+      - application/json
+      description: 获取自定义资源类型列表，支持分页
+      parameters:
+      - description: 起始索引
+        in: query
+        name: startIndex
+        type: integer
+      - description: 每页数量
+        in: query
+        name: count
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.ListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 列出自定义资源类型
+      tags:
+      - CustomResourceTypes
+    post:
+      consumes:
+      - application/json
+      description: 创建新的自定义资源类型，需要提供ID、名称、端点和模式
+      parameters:
+      - description: 自定义资源类型信息
+        in: body
+        name: customResourceType
+        required: true
+        schema:
+          $ref: '#/definitions/model.CustomResourceType'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/model.CustomResourceType'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 创建自定义资源类型
+      tags:
+      - CustomResourceTypes
+  /scim/v2/CustomResourceTypes/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: 根据ID删除自定义资源类型
+      parameters:
+      - description: 自定义资源类型ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+          schema:
+            $ref: '#/definitions/model.CustomResourceType'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 删除自定义资源类型
+      tags:
+      - CustomResourceTypes
+    get:
+      consumes:
+      - application/json
+      description: 根据ID获取自定义资源类型的详细信息
+      parameters:
+      - description: 自定义资源类型ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.CustomResourceType'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 获取自定义资源类型
+      tags:
+      - CustomResourceTypes
+    put:
+      consumes:
+      - application/json
+      description: 更新现有的自定义资源类型信息
+      parameters:
+      - description: 自定义资源类型ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 自定义资源类型信息
+        in: body
+        name: customResourceType
+        required: true
+        schema:
+          $ref: '#/definitions/model.CustomResourceType'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.CustomResourceType'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: 更新自定义资源类型
+      tags:
+      - CustomResourceTypes
+  /test:
+    get:
+      consumes:
+      - application/json
+      description: This is a test endpoint
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: Test endpoint
+      tags:
+      - Test
 securityDefinitions:
   BearerAuth:
     description: 请输入 "Bearer {token}" 格式的认证令牌

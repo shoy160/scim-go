@@ -16,8 +16,8 @@ func TestUserMetaDataCompleteness(t *testing.T) {
 		UserName: "metatest",
 		Name: struct {
 			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+			GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+			FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 		}{
 			GivenName:  "Meta",

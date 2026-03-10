@@ -19,8 +19,11 @@ type RedisStore struct {
 
 // 缓存key前缀
 const (
-	prefixUser  = "scim:user:"
-	prefixGroup = "scim:group:"
+	prefixUser                = "scim:user:"
+	prefixGroup               = "scim:group:"
+	prefixCustomResourceType  = "scim:customResourceType:"
+	prefixCustomResource      = "scim:customResource:"
+	prefixCustomResourceTypes = "scim:customResourceTypes:"
 )
 
 // NewRedis 创建Redis存储实例
@@ -366,4 +369,147 @@ func (r *RedisStore) RemoveRoleFromUser(userID, roleValue string) error {
 	}
 	// 如果找不到记录，返回 nil 而不是错误（可能已经被删除）
 	return nil
+}
+
+// ---------------------- 自定义资源类型相关 ----------------------
+
+// CreateCustomResourceType 创建自定义资源类型
+func (r *RedisStore) CreateCustomResourceType(crt *model.CustomResourceType) error {
+	b, err := json.Marshal(crt)
+	if err != nil {
+		return err
+	}
+	// 存储自定义资源类型
+	err = r.cli.Set(r.ctx, prefixCustomResourceType+crt.ID, b, 0).Err()
+	if err != nil {
+		return err
+	}
+	// 更新自定义资源类型列表
+	r.cli.SAdd(r.ctx, prefixCustomResourceTypes, crt.ID)
+	return nil
+}
+
+// GetCustomResourceType 获取自定义资源类型
+func (r *RedisStore) GetCustomResourceType(id string) (*model.CustomResourceType, error) {
+	b, err := r.cli.Get(r.ctx, prefixCustomResourceType+id).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, model.ErrNotFound
+		}
+		return nil, err
+	}
+	var crt model.CustomResourceType
+	err = json.Unmarshal(b, &crt)
+	return &crt, err
+}
+
+// ListCustomResourceTypes 列出自定义资源类型
+func (r *RedisStore) ListCustomResourceTypes() ([]model.CustomResourceType, error) {
+	ids, err := r.cli.SMembers(r.ctx, prefixCustomResourceTypes).Result()
+	if err != nil {
+		return nil, err
+	}
+	var list []model.CustomResourceType
+	for _, id := range ids {
+		b, err := r.cli.Get(r.ctx, prefixCustomResourceType+id).Bytes()
+		if err != nil {
+			continue
+		}
+		var crt model.CustomResourceType
+		if err := json.Unmarshal(b, &crt); err != nil {
+			continue
+		}
+		list = append(list, crt)
+	}
+	return list, nil
+}
+
+// UpdateCustomResourceType 更新自定义资源类型
+func (r *RedisStore) UpdateCustomResourceType(crt *model.CustomResourceType) error {
+	return r.CreateCustomResourceType(crt)
+}
+
+// DeleteCustomResourceType 删除自定义资源类型
+func (r *RedisStore) DeleteCustomResourceType(id string) error {
+	// 删除自定义资源类型
+	err := r.cli.Del(r.ctx, prefixCustomResourceType+id).Err()
+	if err != nil {
+		return err
+	}
+	// 从自定义资源类型列表中移除
+	r.cli.SRem(r.ctx, prefixCustomResourceTypes, id)
+	return nil
+}
+
+// ---------------------- 自定义资源相关 ----------------------
+
+// CreateCustomResource 创建自定义资源
+func (r *RedisStore) CreateCustomResource(cr *model.CustomResource) error {
+	b, err := json.Marshal(cr)
+	if err != nil {
+		return err
+	}
+	key := prefixCustomResource + cr.ResourceType + ":" + cr.ID
+	return r.cli.Set(r.ctx, key, b, 0).Err()
+}
+
+// GetCustomResource 获取自定义资源
+func (r *RedisStore) GetCustomResource(id, resourceType string) (*model.CustomResource, error) {
+	key := prefixCustomResource + resourceType + ":" + id
+	b, err := r.cli.Get(r.ctx, key).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, model.ErrNotFound
+		}
+		return nil, err
+	}
+	var cr model.CustomResource
+	err = json.Unmarshal(b, &cr)
+	return &cr, err
+}
+
+// ListCustomResources 列出自定义资源
+func (r *RedisStore) ListCustomResources(q *model.CustomResourceQuery) ([]model.CustomResource, int64, error) {
+	pattern := prefixCustomResource + q.ResourceType + ":*"
+	keys, err := r.cli.Keys(r.ctx, pattern).Result()
+	if err != nil {
+		return nil, 0, err
+	}
+	var list []model.CustomResource
+	for _, k := range keys {
+		b, err := r.cli.Get(r.ctx, k).Bytes()
+		if err != nil {
+			continue
+		}
+		var cr model.CustomResource
+		if err := json.Unmarshal(b, &cr); err != nil {
+			continue
+		}
+		list = append(list, cr)
+	}
+	return list, int64(len(list)), nil
+}
+
+// UpdateCustomResource 更新自定义资源
+func (r *RedisStore) UpdateCustomResource(cr *model.CustomResource) error {
+	return r.CreateCustomResource(cr)
+}
+
+// PatchCustomResource 补丁更新自定义资源
+func (r *RedisStore) PatchCustomResource(id, resourceType string, ops []model.PatchOperation) error {
+	cr, err := r.GetCustomResource(id, resourceType)
+	if err != nil {
+		return err
+	}
+	err = PatchResource(r, id, cr, ops)
+	if err != nil {
+		return err
+	}
+	return r.CreateCustomResource(cr)
+}
+
+// DeleteCustomResource 删除自定义资源
+func (r *RedisStore) DeleteCustomResource(id, resourceType string) error {
+	key := prefixCustomResource + resourceType + ":" + id
+	return r.cli.Del(r.ctx, key).Err()
 }

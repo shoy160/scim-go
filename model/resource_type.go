@@ -112,6 +112,12 @@ func GetUserResourceType() *ResourceType {
 		Endpoint:    "/Users",
 		Description: "User Account",
 		Schema:      UserSchema.String(),
+		SchemaExtensions: []SchemaExtension{
+			{
+				Schema:   EnterpriseUserSchema.String(),
+				Required: false,
+			},
+		},
 	}
 }
 
@@ -301,6 +307,103 @@ func GetUserSchema() *Schema {
 				Mutability:  "readWrite",
 				Returned:    "default",
 				Uniqueness:  "none",
+			},
+		},
+	}
+}
+
+// GetEnterpriseUserExtensionSchema 返回企业用户扩展 Schema 定义
+func GetEnterpriseUserExtensionSchema() *Schema {
+	return &Schema{
+		Schemas:     []string{SchemaDefinitionSchema},
+		ID:          EnterpriseUserSchema.String(),
+		Name:        "EnterpriseUser",
+		Description: "Enterprise User Extension",
+		Attributes: []SchemaAttribute{
+			{
+				Name:        "employeeNumber",
+				Type:        "string",
+				MultiValued: false,
+				Description: "Numeric or alphanumeric identifier assigned to a person, typically based on order of hire or association with an organization.",
+				Required:    false,
+				CaseExact:   false,
+				Mutability:  "readWrite",
+				Returned:    "default",
+				Uniqueness:  "none",
+			},
+			{
+				Name:        "costCenter",
+				Type:        "string",
+				MultiValued: false,
+				Description: "Identifies the name of a cost center.',",
+				Required:    false,
+				CaseExact:   false,
+				Mutability:  "readWrite",
+				Returned:    "default",
+				Uniqueness:  "none",
+			},
+			{
+				Name:        "organization",
+				Type:        "string",
+				MultiValued: false,
+				Description: "Identifies the name of an organization.',",
+				Required:    false,
+				CaseExact:   false,
+				Mutability:  "readWrite",
+				Returned:    "default",
+				Uniqueness:  "none",
+			},
+			{
+				Name:        "division",
+				Type:        "string",
+				MultiValued: false,
+				Description: "Identifies the name of a division.',",
+				Required:    false,
+				CaseExact:   false,
+				Mutability:  "readWrite",
+				Returned:    "default",
+				Uniqueness:  "none",
+			},
+			{
+				Name:        "department",
+				Type:        "string",
+				MultiValued: false,
+				Description: "Identifies the name of a department.',",
+				Required:    false,
+				CaseExact:   false,
+				Mutability:  "readWrite",
+				Returned:    "default",
+				Uniqueness:  "none",
+			},
+			{
+				Name:        "manager",
+				Type:        "complex",
+				MultiValued: false,
+				Description: "The user's manager.",
+				Required:    false,
+				SubAttributes: []SchemaAttribute{
+					{
+						Name:        "value",
+						Type:        "string",
+						MultiValued: false,
+						Description: "The unique identifier of the manager.',",
+						Required:    false,
+						CaseExact:   true,
+						Mutability:  "readWrite",
+						Returned:    "default",
+						Uniqueness:  "none",
+					},
+					{
+						Name:           "$ref",
+						Type:           "reference",
+						MultiValued:    false,
+						Description:    "The URI of the manager.',",
+						Required:       false,
+						ReferenceTypes: []string{"User"},
+						Mutability:     "readWrite",
+						Returned:       "default",
+					},
+				},
 			},
 		},
 	}

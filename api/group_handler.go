@@ -46,34 +46,36 @@ func NewGroupHandlers(s store.Store, cfg *model.ScimConfig) *GroupHandlers {
 func (h *GroupHandlers) ListGroups(c *gin.Context) {
 	q := c.MustGet("scim_query").(*model.ResourceQuery)
 
-	// 验证过滤器语法
-	if err := h.validateFilter(c, q.Filter); err != nil {
-		return
+	// 构建列表请求
+	req := ListRequest{
+		Query: q,
+		ValidateFilter: func(filter string) error {
+			return h.validateFilter(c, filter)
+		},
+		ListFunc: func(q *model.ResourceQuery) ([]interface{}, int64, error) {
+			preloadMembers := h.needsMembers(q)
+			groups, total, err := h.store.ListGroups(q, preloadMembers)
+			if err != nil {
+				return nil, 0, err
+			}
+			resources := make([]interface{}, len(groups))
+			for i, group := range groups {
+				resources[i] = group
+			}
+			return resources, total, nil
+		},
+		ProcessFunc: func(resources []interface{}, q *model.ResourceQuery, host, proto string) []interface{} {
+			groups := make([]model.Group, len(resources))
+			for i, resource := range resources {
+				groups[i] = resource.(model.Group)
+			}
+			return h.processGroupList(groups, q, host, proto)
+		},
+		Schema: h.cfg.ListSchema,
 	}
 
-	// 检查是否需要预加载成员
-	preloadMembers := h.needsMembers(q)
-
-	groups, total, err := h.store.ListGroups(q, preloadMembers)
-	if err != nil {
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
-	}
-
-	// 获取当前请求的host和proto
-	host := c.Request.Host
-	proto := GetRequestProtocol(c)
-
-	// 处理组列表并应用属性选择
-	resources := h.processGroupList(groups, q, host, proto)
-	if resources == nil {
-		ErrorHandler(c, errors.New("failed to process group list"), http.StatusInternalServerError, "internalError")
-		return
-	}
-
-	// 构造SCIM标准列表响应
-	response := util.NewListResponse(h.cfg.ListSchema, int(total), q.StartIndex, q.Count, resources)
-	c.JSON(http.StatusOK, response)
+	// 处理列表请求
+	HandleList(c, req)
 }
 
 // GetGroup 获取单个组
@@ -95,38 +97,34 @@ func (h *GroupHandlers) GetGroup(c *gin.Context) {
 	id := c.Param("id")
 	q := c.MustGet("scim_query").(*model.ResourceQuery)
 
-	// 检查是否需要预加载成员
-	preloadMembers := h.needsMembers(q)
+	// 构建获取请求
+	req := GetRequest{
+		ID:    id,
+		Query: q,
+		GetFunc: func(id string, preload bool) (interface{}, error) {
+			preloadMembers := h.needsMembers(q)
+			return h.store.GetGroup(id, preloadMembers)
+		},
+		ProcessFunc: func(resource interface{}, q *model.ResourceQuery, host, proto string) error {
+			group := resource.(*model.Group)
 
-	group, err := h.store.GetGroup(id, preloadMembers)
-	if err != nil {
-		ErrorHandler(c, err, http.StatusNotFound, "notFound")
-		return
+			// 如果组没有 schemas，设置默认 schema（支持自定义 schemas）
+			if len(group.Schemas) == 0 {
+				group.Schemas = []string{h.cfg.GroupSchema}
+			}
+
+			// 从数据库填充 meta 数据
+			baseURL := proto + "://" + host
+			h.populateGroupMeta(group, baseURL)
+
+			return nil
+		},
+		AttributeName: "members",
+		Schema:        h.cfg.GroupSchema,
 	}
 
-	// 如果组没有 schemas，设置默认 schema（支持自定义 schemas）
-	if len(group.Schemas) == 0 {
-		group.Schemas = []string{h.cfg.GroupSchema}
-	}
-
-	// 从数据库填充 meta 数据
-	host := c.Request.Host
-	proto := GetRequestProtocol(c)
-	baseURL := proto + "://" + host
-	h.populateGroupMeta(group, baseURL)
-
-	// 应用属性选择（属性格式已在中间件验证）
-	if q.Attributes != "" || q.ExcludedAttributes != "" {
-		filtered, err := util.ApplyAttributeSelectionWithSpecialRules(group, q.Attributes, q.ExcludedAttributes, "members")
-		if err != nil {
-			ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-			return
-		}
-		c.JSON(http.StatusOK, filtered)
-		return
-	}
-
-	c.JSON(http.StatusOK, group)
+	// 处理获取请求
+	HandleGet(c, req)
 }
 
 // CreateGroup 创建组
@@ -150,12 +148,6 @@ func (h *GroupHandlers) CreateGroup(c *gin.Context) {
 		return
 	}
 
-	// 验证必填字段
-	if g.DisplayName == "" {
-		ErrorHandler(c, errors.New("displayName is required"), http.StatusBadRequest, "invalidValue")
-		return
-	}
-
 	// 生成唯一ID
 	g.ID = uuid.NewString()
 	// 如果用户没有提供 schemas，使用默认 schema
@@ -163,27 +155,31 @@ func (h *GroupHandlers) CreateGroup(c *gin.Context) {
 		g.Schemas = []string{h.cfg.GroupSchema}
 	}
 
-	// 保存组
-	if err := h.store.CreateGroup(&g); err != nil {
-		if errors.Is(err, model.ErrUniqueness) {
-			ErrorHandler(c, err, http.StatusConflict, "uniqueness")
-			return
-		}
-		if errors.Is(err, model.ErrNotFound) {
-			ErrorHandler(c, errors.New("invalid member reference"), http.StatusBadRequest, "invalidValue")
-			return
-		}
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
+	// 构建创建请求
+	req := CreateRequest{
+		Resource: &g,
+		ValidateFunc: func(resource interface{}) error {
+			group := resource.(*model.Group)
+			if group.DisplayName == "" {
+				return errors.New("displayName is required")
+			}
+			return nil
+		},
+		CreateFunc: func(resource interface{}) error {
+			group := resource.(*model.Group)
+			return h.store.CreateGroup(group)
+		},
+		ProcessFunc: func(resource interface{}, host, proto string) error {
+			group := resource.(*model.Group)
+			baseURL := proto + "://" + host
+			h.populateGroupMeta(group, baseURL)
+			return nil
+		},
+		Schema: h.cfg.GroupSchema,
 	}
 
-	// 从数据库填充 meta 数据
-	host := c.Request.Host
-	proto := GetRequestProtocol(c)
-	baseURL := proto + "://" + host
-	h.populateGroupMeta(&g, baseURL)
-
-	c.JSON(http.StatusCreated, g)
+	// 处理创建请求
+	HandleCreate(c, req)
 }
 
 // UpdateGroup 全量替换组
@@ -209,12 +205,6 @@ func (h *GroupHandlers) UpdateGroup(c *gin.Context) {
 		return
 	}
 
-	// 验证必填字段
-	if g.DisplayName == "" {
-		ErrorHandler(c, errors.New("displayName is required"), http.StatusBadRequest, "invalidValue")
-		return
-	}
-
 	// 强制使用URL中的ID
 	g.ID = id
 	// 如果用户没有提供 schemas，使用默认 schema
@@ -222,41 +212,50 @@ func (h *GroupHandlers) UpdateGroup(c *gin.Context) {
 		g.Schemas = []string{h.cfg.GroupSchema}
 	}
 
-	if err := h.store.UpdateGroup(&g); err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			ErrorHandler(c, err, http.StatusNotFound, "notFound")
-			return
-		}
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
+	// 构建更新请求
+	req := UpdateRequest{
+		ID:       id,
+		Resource: &g,
+		ValidateFunc: func(resource interface{}) error {
+			group := resource.(*model.Group)
+			if group.DisplayName == "" {
+				return errors.New("displayName is required")
+			}
+			return nil
+		},
+		UpdateFunc: func(resource interface{}) error {
+			group := resource.(*model.Group)
+			return h.store.UpdateGroup(group)
+		},
+		GetFunc: func(id string) (interface{}, error) {
+			return h.store.GetGroup(id, false)
+		},
+		ProcessFunc: func(resource interface{}, host, proto string) error {
+			group := resource.(*model.Group)
+
+			// 从数据库填充 meta 数据
+			baseURL := proto + "://" + host
+			h.populateGroupMeta(group, baseURL)
+
+			return nil
+		},
+		Schema: h.cfg.GroupSchema,
 	}
 
-	// 从数据库重新获取组以获取最新的 meta 数据
-	updatedGroup, err := h.store.GetGroup(id, false)
-	if err != nil {
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
-	}
-
-	// 从数据库填充 meta 数据
-	host := c.Request.Host
-	proto := GetRequestProtocol(c)
-	baseURL := proto + "://" + host
-	h.populateGroupMeta(updatedGroup, baseURL)
-
-	c.JSON(http.StatusOK, updatedGroup)
+	// 处理更新请求
+	HandleUpdate(c, req)
 }
 
 // PatchGroup 补丁更新组属性
 // @Summary 补丁更新组
-// @Description 使用补丁操作更新组属性
+// @Description 使用补丁操作更新组属性。支持两种操作模式：1) 指定path参数更新特定属性；2) path为空时，value对象包含完整的资源属性修改
 // @Tags Groups
 // @Accept json
 // @Produce json
 // @Param id path string true "组ID"
-// @Param patch body model.PatchRequest true "补丁操作"
+// @Param patch body model.PatchRequest true "补丁操作。当path为空时，value必须是对象类型，包含需要修改的资源属性"
 // @Success 200 {object} model.Group "更新成功"
-// @Failure 400 {object} model.ErrorResponse "请求参数错误"
+// @Failure 400 {object} model.ErrorResponse "请求参数错误 - 当path为空时，value必须是非空对象"
 // @Failure 401 {object} model.ErrorResponse "未授权"
 // @Failure 404 {object} model.ErrorResponse "组不存在"
 // @Failure 500 {object} model.ErrorResponse "服务器内部错误"
@@ -276,34 +275,35 @@ func (h *GroupHandlers) PatchGroup(c *gin.Context) {
 		return
 	}
 
-	// 执行补丁更新
-	if err := h.store.PatchGroup(id, req.Operations); err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			ErrorHandler(c, err, http.StatusNotFound, "notFound")
-			return
-		}
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
+	// 构建补丁请求
+	reqPatch := PatchRequest{
+		ID:  id,
+		Ops: req.Operations,
+		GetFunc: func(id string) (interface{}, error) {
+			return h.store.GetGroup(id, true)
+		},
+		PatchFunc: func(id string, ops []model.PatchOperation) error {
+			return h.store.PatchGroup(id, ops)
+		},
+		ProcessFunc: func(resource interface{}, host, proto string) error {
+			group := resource.(*model.Group)
+
+			// 如果组没有 schemas，设置默认 schema（支持自定义 schemas）
+			if len(group.Schemas) == 0 {
+				group.Schemas = []string{h.cfg.GroupSchema}
+			}
+
+			// 从数据库填充 meta 数据
+			baseURL := proto + "://" + host
+			h.populateGroupMeta(group, baseURL)
+
+			return nil
+		},
+		Schema: h.cfg.GroupSchema,
 	}
 
-	// 返回更新后的组
-	group, err := h.store.GetGroup(id, true)
-	if err != nil {
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
-	}
-	// 如果组没有 schemas，设置默认 schema（支持自定义 schemas）
-	if len(group.Schemas) == 0 {
-		group.Schemas = []string{h.cfg.GroupSchema}
-	}
-
-	// 从数据库填充 meta 数据
-	host := c.Request.Host
-	proto := GetRequestProtocol(c)
-	baseURL := proto + "://" + host
-	h.populateGroupMeta(group, baseURL)
-
-	c.JSON(http.StatusOK, group)
+	// 处理补丁请求
+	HandlePatch(c, reqPatch)
 }
 
 // DeleteGroup 删除组
@@ -321,17 +321,17 @@ func (h *GroupHandlers) PatchGroup(c *gin.Context) {
 // @Security BearerAuth
 func (h *GroupHandlers) DeleteGroup(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.store.DeleteGroup(id); err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			ErrorHandler(c, err, http.StatusNotFound, "notFound")
-			return
-		}
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
+
+	// 构建删除请求
+	req := DeleteRequest{
+		ID: id,
+		DeleteFunc: func(id string) error {
+			return h.store.DeleteGroup(id)
+		},
 	}
 
-	// SCIM标准：删除成功返回204 No Content
-	c.Status(http.StatusNoContent)
+	// 处理删除请求
+	HandleDelete(c, req)
 }
 
 // AddMembersToGroup 添加成员到组

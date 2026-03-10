@@ -41,8 +41,8 @@ func TestUserHandlers(t *testing.T) {
 			UserName: "john.doe",
 			Name: struct {
 				Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-				GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-				FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+				GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+				FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 				MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 			}{
 				GivenName:  "John",
@@ -97,8 +97,8 @@ func TestUserHandlers(t *testing.T) {
 			UserName: "jane.doe",
 			Name: struct {
 				Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-				GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-				FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+				GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+				FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 				MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 			}{
 				GivenName:  "Jane",
@@ -168,8 +168,8 @@ func TestUserHandlers(t *testing.T) {
 			UserName: "delete.me",
 			Name: struct {
 				Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-				GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-				FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+				GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+				FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 				MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 			}{
 				GivenName:  "Delete",
@@ -429,8 +429,8 @@ func TestGroupMemberManagement(t *testing.T) {
 		UserName: "alice",
 		Name: struct {
 			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+			GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+			FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 		}{
 			GivenName:  "Alice",
@@ -443,8 +443,8 @@ func TestGroupMemberManagement(t *testing.T) {
 		UserName: "bob",
 		Name: struct {
 			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+			GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+			FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 		}{
 			GivenName:  "Bob",
@@ -680,8 +680,8 @@ func TestUserAttributesGroups(t *testing.T) {
 		UserName: "alice",
 		Name: struct {
 			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+			GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+			FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 		}{
 			GivenName:  "Alice",
@@ -694,8 +694,8 @@ func TestUserAttributesGroups(t *testing.T) {
 		UserName: "bob",
 		Name: struct {
 			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+			GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+			FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 		}{
 			GivenName:  "Bob",
@@ -847,8 +847,8 @@ func TestGroupAttributesMembers(t *testing.T) {
 		UserName: "alice",
 		Name: struct {
 			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+			GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+			FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 		}{
 			GivenName:  "Alice",
@@ -861,8 +861,8 @@ func TestGroupAttributesMembers(t *testing.T) {
 		UserName: "bob",
 		Name: struct {
 			Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-			GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-			FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+			GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+			FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 			MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 		}{
 			GivenName:  "Bob",

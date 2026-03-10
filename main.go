@@ -33,6 +33,7 @@ import (
 	"scim-go/api"
 	"scim-go/internal/config"
 	"scim-go/store"
+	"scim-go/util"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/mysql"
@@ -115,6 +116,27 @@ func initPostgres(cfg config.Config) store.Store {
 	return store.NewDB(db, nil)
 }
 
+// initTimePrecision 初始化时间精确度配置
+func initTimePrecision(cfg *config.Config) error {
+	level := cfg.TimePrecision.Level
+	format := cfg.TimePrecision.Format
+
+	// 如果未配置级别，使用默认值
+	if level == "" {
+		level = "second"
+	}
+
+	if err := util.SetTimePrecision(level, format); err != nil {
+		return err
+	}
+
+	// 打印时间精确度配置信息
+	precisionLevel, timeFormat := util.GetTimePrecision()
+	log.Printf("时间精确度配置: level=%s, format=%s", precisionLevel, timeFormat)
+
+	return nil
+}
+
 // printUsage 打印使用帮助
 func printUsage() {
 	fmt.Println("SCIM 2.0 API Server")
@@ -193,7 +215,12 @@ func main() {
 	// 4. 打印配置摘要
 	config.PrintConfigSummary(cfg, registry)
 
-	// 2. 设置Gin运行模式
+	// 5. 初始化时间精确度配置
+	if err := initTimePrecision(cfg); err != nil {
+		log.Fatalf("时间精确度配置初始化失败: %v", err)
+	}
+
+	// 6. 设置Gin运行模式
 	gin.SetMode(globalCfg.Mode)
 	r := gin.New()
 	// 加入基础中间件：日志+恢复panic

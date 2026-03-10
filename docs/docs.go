@@ -495,7 +495,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "将用户添加到指定组",
+                "description": "将一个或多个成员添加到指定组",
                 "consumes": [
                     "application/json"
                 ],
@@ -505,7 +505,7 @@ const docTemplate = `{
                 "tags": [
                     "Groups"
                 ],
-                "summary": "添加用户到组",
+                "summary": "添加成员到组",
                 "parameters": [
                     {
                         "type": "string",
@@ -515,12 +515,22 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "成员信息",
+                        "description": "单个成员信息",
                         "name": "member",
                         "in": "body",
-                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/model.Member"
+                        }
+                    },
+                    {
+                        "description": "成员信息数组",
+                        "name": "members",
+                        "in": "body",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/model.Member"
+                            }
                         }
                     }
                 ],
@@ -544,7 +554,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "组或用户不存在",
+                        "description": "组或成员不存在",
                         "schema": {
                             "$ref": "#/definitions/model.ErrorResponse"
                         }
@@ -565,7 +575,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "将用户从指定组中移除",
+                "description": "将成员从指定组中移除",
                 "consumes": [
                     "application/json"
                 ],
@@ -575,7 +585,7 @@ const docTemplate = `{
                 "tags": [
                     "Groups"
                 ],
-                "summary": "从组中移除用户",
+                "summary": "从组中移除成员",
                 "parameters": [
                     {
                         "type": "string",
@@ -586,7 +596,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "用户ID",
+                        "description": "成员ID",
                         "name": "userId",
                         "in": "path",
                         "required": true
@@ -603,7 +613,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "组或用户不存在",
+                        "description": "组或成员不存在",
                         "schema": {
                             "$ref": "#/definitions/model.ErrorResponse"
                         }
@@ -1010,9 +1020,694 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/scim/v2/CustomResourceTypes": {
+            "get": {
+                "description": "获取自定义资源类型列表，支持分页",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResourceTypes"
+                ],
+                "summary": "列出自定义资源类型",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "起始索引",
+                        "name": "startIndex",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "count",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.ListResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "创建新的自定义资源类型，需要提供ID、名称、端点和模式",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResourceTypes"
+                ],
+                "summary": "创建自定义资源类型",
+                "parameters": [
+                    {
+                        "description": "自定义资源类型信息",
+                        "name": "customResourceType",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResourceType"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResourceType"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/scim/v2/CustomResourceTypes/{id}": {
+            "get": {
+                "description": "根据ID获取自定义资源类型的详细信息",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResourceTypes"
+                ],
+                "summary": "获取自定义资源类型",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "自定义资源类型ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResourceType"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "更新现有的自定义资源类型信息",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResourceTypes"
+                ],
+                "summary": "更新自定义资源类型",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "自定义资源类型ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "自定义资源类型信息",
+                        "name": "customResourceType",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResourceType"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResourceType"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "根据ID删除自定义资源类型",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResourceTypes"
+                ],
+                "summary": "删除自定义资源类型",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "自定义资源类型ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content",
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResourceType"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/scim/v2/{resourceType}": {
+            "get": {
+                "description": "获取指定类型的自定义资源列表，支持分页和过滤",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResources"
+                ],
+                "summary": "列出自定义资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "资源类型",
+                        "name": "resourceType",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "起始索引",
+                        "name": "startIndex",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "count",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "过滤条件",
+                        "name": "filter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "排序字段",
+                        "name": "sortBy",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "排序顺序",
+                        "name": "sortOrder",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.ListResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "创建新的自定义资源",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResources"
+                ],
+                "summary": "创建自定义资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "资源类型",
+                        "name": "resourceType",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "自定义资源信息",
+                        "name": "customResource",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResource"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResource"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/scim/v2/{resourceType}/{resourceID}": {
+            "get": {
+                "description": "根据ID获取自定义资源的详细信息",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResources"
+                ],
+                "summary": "获取自定义资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "资源类型",
+                        "name": "resourceType",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "资源ID",
+                        "name": "resourceID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResource"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "更新现有的自定义资源信息",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResources"
+                ],
+                "summary": "更新自定义资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "资源类型",
+                        "name": "resourceType",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "资源ID",
+                        "name": "resourceID",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "自定义资源信息",
+                        "name": "customResource",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResource"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResource"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "根据ID删除自定义资源",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResources"
+                ],
+                "summary": "删除自定义资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "资源类型",
+                        "name": "resourceType",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "资源ID",
+                        "name": "resourceID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content",
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResource"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "使用补丁操作更新自定义资源的部分属性",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CustomResources"
+                ],
+                "summary": "补丁更新自定义资源",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "资源类型",
+                        "name": "resourceType",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "资源ID",
+                        "name": "resourceID",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "补丁操作",
+                        "name": "patch",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/model.PatchOperation"
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.CustomResource"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/test": {
+            "get": {
+                "description": "This is a test endpoint",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Test"
+                ],
+                "summary": "Test endpoint",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "model.CustomResource": {
+            "description": "自定义资源数据定义",
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "description": "存储自定义资源的属性",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "externalId": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "meta": {
+                    "$ref": "#/definitions/model.Meta"
+                },
+                "resourceType": {
+                    "description": "关联到 CustomResourceType 的 ID",
+                    "type": "string"
+                },
+                "schemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.CustomResourceType": {
+            "description": "自定义资源类型定义",
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "endpoint": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "meta": {
+                    "$ref": "#/definitions/model.Meta"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "schema": {
+                    "description": "自定义资源的 schema URI",
+                    "type": "string"
+                },
+                "schemaExtensions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.SchemaExtension"
+                    }
+                },
+                "schemas": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "model.Email": {
             "type": "object",
             "properties": {
@@ -1237,6 +1932,17 @@ const docTemplate = `{
                 },
                 "value": {
                     "description": "角色值",
+                    "type": "string"
+                }
+            }
+        },
+        "model.SchemaExtension": {
+            "type": "object",
+            "properties": {
+                "required": {
+                    "type": "boolean"
+                },
+                "schema": {
                     "type": "string"
                 }
             }

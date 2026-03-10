@@ -46,6 +46,8 @@ const (
 	UserSchema SCIMSchema = "urn:ietf:params:scim:schemas:core:2.0:User"
 	// GroupSchema SCIM组Schema
 	GroupSchema SCIMSchema = "urn:ietf:params:scim:schemas:core:2.0:Group"
+	// 企业用户属性 Schema
+	EnterpriseUserSchema SCIMSchema = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
 )
 
 // String 返回Schema的字符串表示
@@ -124,7 +126,7 @@ func (p *PatchOperation) Validate() error {
 // ErrorResponse SCIM标准错误响应
 type ErrorResponse struct {
 	// Schemas SCIM错误Schema
-	Schemas string `json:"schemas"`
+	Schemas []string `json:"schemas"`
 	// Detail 错误详情
 	Detail string `json:"detail"`
 	// Status HTTP状态码
@@ -136,7 +138,7 @@ type ErrorResponse struct {
 // NewErrorResponse 创建新的错误响应
 func NewErrorResponse(detail string, status int, scimType string) *ErrorResponse {
 	return &ErrorResponse{
-		Schemas:  ErrorSchema.String(),
+		Schemas:  []string{ErrorSchema.String()},
 		Detail:   detail,
 		Status:   status,
 		ScimType: scimType,

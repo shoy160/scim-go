@@ -50,6 +50,21 @@ type Store interface {
 	// ---------------------- Email/Role 管理 ----------------------
 	RemoveEmailFromUser(userID, emailValue string) error // 从用户中移除指定邮箱
 	RemoveRoleFromUser(userID, roleValue string) error   // 从用户中移除指定角色
+
+	// ---------------------- 自定义资源类型相关 ----------------------
+	CreateCustomResourceType(crt *model.CustomResourceType) error
+	GetCustomResourceType(id string) (*model.CustomResourceType, error)
+	ListCustomResourceTypes() ([]model.CustomResourceType, error)
+	UpdateCustomResourceType(crt *model.CustomResourceType) error
+	DeleteCustomResourceType(id string) error
+
+	// ---------------------- 自定义资源相关 ----------------------
+	CreateCustomResource(cr *model.CustomResource) error
+	GetCustomResource(id, resourceType string) (*model.CustomResource, error)
+	ListCustomResources(q *model.CustomResourceQuery) ([]model.CustomResource, int64, error)
+	UpdateCustomResource(cr *model.CustomResource) error
+	PatchCustomResource(id, resourceType string, ops []model.PatchOperation) error
+	DeleteCustomResource(id, resourceType string) error
 }
 
 // PatchResource 处理 SCIM Patch 操作
@@ -112,6 +127,17 @@ func handleAddOrReplace(s Store, id string, data any, op model.PatchOperation, i
 			return handleAddRoles(data, op.Value)
 		}
 		return handleReplaceRoles(data, op.Value)
+	}
+	// 企业扩展属性 schema 路径处理
+	enterpriseSchema := model.EnterpriseUserSchema.String()
+	if op.Path == enterpriseSchema && isUser {
+		// 如果 path 是企业扩展属性 schema，value 应该是企业扩展属性对象
+		if op.Value != nil {
+			return util.MergeValue(data, map[string]any{
+				enterpriseSchema: op.Value,
+			})
+		}
+		return nil
 	}
 	// 通用字段处理
 	if op.Path != "" {
@@ -211,6 +237,10 @@ func handleRemove(s Store, id string, data any, op model.PatchOperation, isGroup
 	// 通用字段处理
 	if op.Path != "" {
 		return util.RemoveByPath(data, op.Path)
+	}
+	// 如果 Path 为空，Value 应该是一个对象，需要删除对象中指定的字段
+	if op.Value != nil {
+		return util.RemoveValue(data, op.Value)
 	}
 	return nil
 }
@@ -322,12 +352,22 @@ func handleAddEmails(data any, value any) error {
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
+	// 检查重复的 email（使用小写作为键）
+	existingEmails := make(map[string]bool)
+	for _, e := range user.Emails {
+		existingEmails[strings.ToLower(e.Value)] = true
+	}
 	for _, email := range emails {
 		parsedEmail, err := parseEmail(email, user.ID)
 		if err != nil {
 			return err
 		}
+		// 检查是否与现有 email 重复（不区分大小写）
+		if existingEmails[strings.ToLower(parsedEmail.Value)] {
+			return fmt.Errorf("duplicate email address: %s", parsedEmail.Value)
+		}
 		user.Emails = append(user.Emails, parsedEmail)
+		existingEmails[strings.ToLower(parsedEmail.Value)] = true
 	}
 	return nil
 }
@@ -346,12 +386,19 @@ func handleReplaceEmails(data any, value any) error {
 		return fmt.Errorf("data must be a User pointer")
 	}
 	user.Emails = make([]model.Email, 0, len(emails))
+	// 检查重复的 email
+	existingEmails := make(map[string]bool)
 	for _, email := range emails {
 		parsedEmail, err := parseEmail(email, user.ID)
 		if err != nil {
 			return err
 		}
+		// 检查是否重复
+		if existingEmails[parsedEmail.Value] {
+			return fmt.Errorf("duplicate email address in request: %s", parsedEmail.Value)
+		}
 		user.Emails = append(user.Emails, parsedEmail)
+		existingEmails[parsedEmail.Value] = true
 	}
 	return nil
 }
@@ -407,12 +454,22 @@ func handleAddRoles(data any, value any) error {
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
+	// 检查重复的 role（使用小写作为键）
+	existingRoles := make(map[string]bool)
+	for _, r := range user.Roles {
+		existingRoles[strings.ToLower(r.Value)] = true
+	}
 	for _, role := range roles {
 		parsedRole, err := parseRole(role, user.ID)
 		if err != nil {
 			return err
 		}
+		// 检查是否与现有 role 重复（不区分大小写）
+		if existingRoles[strings.ToLower(parsedRole.Value)] {
+			return fmt.Errorf("duplicate role: %s", parsedRole.Value)
+		}
 		user.Roles = append(user.Roles, parsedRole)
+		existingRoles[strings.ToLower(parsedRole.Value)] = true
 	}
 	return nil
 }
@@ -431,12 +488,19 @@ func handleReplaceRoles(data any, value any) error {
 		return fmt.Errorf("data must be a User pointer")
 	}
 	user.Roles = make([]model.Role, 0, len(roles))
+	// 检查重复的 role（使用小写作为键）
+	existingRoles := make(map[string]bool)
 	for _, role := range roles {
 		parsedRole, err := parseRole(role, user.ID)
 		if err != nil {
 			return err
 		}
+		// 检查是否重复（不区分大小写）
+		if existingRoles[strings.ToLower(parsedRole.Value)] {
+			return fmt.Errorf("duplicate role in request: %s", parsedRole.Value)
+		}
 		user.Roles = append(user.Roles, parsedRole)
+		existingRoles[strings.ToLower(parsedRole.Value)] = true
 	}
 	return nil
 }
@@ -467,13 +531,14 @@ func handleRemoveEmails(s Store, userID string, data any, value any) error {
 		if !ok {
 			return fmt.Errorf("email value must be a string")
 		}
-		// 从内存中移除
-		for i, e := range user.Emails {
-			if strings.EqualFold(e.Value, emailValue) {
-				user.Emails = append(user.Emails[:i], user.Emails[i+1:]...)
-				break
+		// 从内存中移除所有匹配的邮箱（不区分大小写）
+		var newEmails []model.Email
+		for _, e := range user.Emails {
+			if !strings.EqualFold(e.Value, emailValue) {
+				newEmails = append(newEmails, e)
 			}
 		}
+		user.Emails = newEmails
 		// 对于 DBStore，删除操作已在 PatchUser 中处理，这里不需要重复删除
 		// 对于 MemoryStore 和其他存储，需要调用 Store 方法删除
 		if _, isDB := s.(*DBStore); !isDB {

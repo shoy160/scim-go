@@ -18,6 +18,17 @@ func ValidatePatchRequest(req *model.PatchRequest) error {
 		if !validOps[op.Op] {
 			return errors.New("invalid operation: " + op.Op)
 		}
+
+		// 当 path 为空时，验证 value 是否存在且为对象类型
+		if op.Path == "" {
+			if op.Value == nil {
+				return errors.New("value is required when path is empty")
+			}
+			// 验证 value 是否为 map[string]any 类型（对象）
+			if _, ok := op.Value.(map[string]any); !ok {
+				return errors.New("value must be an object when path is empty")
+			}
+		}
 	}
 
 	return nil

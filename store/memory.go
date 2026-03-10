@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"scim-go/model"
 	"scim-go/util"
 	"sort"
@@ -13,24 +14,32 @@ import (
 // MemoryStore 内存存储实现
 // 优化：添加用户名索引以提升查询性能
 type MemoryStore struct {
-	users           map[string]*model.User
-	groups          map[string]*model.Group
-	userNameIdx     map[string]string                               // 用户名 -> 用户ID 索引
-	groupNameIdx    map[string]string                               // 组名 -> 组ID 索引
-	userTimestamps  map[string]struct{ CreatedAt, UpdatedAt int64 } // 用户时间戳
-	groupTimestamps map[string]struct{ CreatedAt, UpdatedAt int64 } // 组时间戳
-	mu              sync.RWMutex                                    // 读写锁，保证并发安全
+	users                        map[string]*model.User
+	groups                       map[string]*model.Group
+	customResourceTypes          map[string]*model.CustomResourceType
+	customResources              map[string]map[string]*model.CustomResource     // 资源类型 -> 资源ID -> 资源
+	userNameIdx                  map[string]string                               // 用户名 -> 用户ID 索引
+	groupNameIdx                 map[string]string                               // 组名 -> 组ID 索引
+	customResourceTypeIdx        map[string]string                               // 资源类型名称 -> 资源类型ID 索引
+	userTimestamps               map[string]struct{ CreatedAt, UpdatedAt int64 } // 用户时间戳
+	groupTimestamps              map[string]struct{ CreatedAt, UpdatedAt int64 } // 组时间戳
+	customResourceTypeTimestamps map[string]struct{ CreatedAt, UpdatedAt int64 } // 自定义资源类型时间戳
+	mu                           sync.RWMutex                                    // 读写锁，保证并发安全
 }
 
 // NewMemory 创建内存存储实例
 func NewMemory() Store {
 	return &MemoryStore{
-		users:           make(map[string]*model.User),
-		groups:          make(map[string]*model.Group),
-		userNameIdx:     make(map[string]string),
-		groupNameIdx:    make(map[string]string),
-		userTimestamps:  make(map[string]struct{ CreatedAt, UpdatedAt int64 }),
-		groupTimestamps: make(map[string]struct{ CreatedAt, UpdatedAt int64 }),
+		users:                        make(map[string]*model.User),
+		groups:                       make(map[string]*model.Group),
+		customResourceTypes:          make(map[string]*model.CustomResourceType),
+		customResources:              make(map[string]map[string]*model.CustomResource),
+		userNameIdx:                  make(map[string]string),
+		groupNameIdx:                 make(map[string]string),
+		customResourceTypeIdx:        make(map[string]string),
+		userTimestamps:               make(map[string]struct{ CreatedAt, UpdatedAt int64 }),
+		groupTimestamps:              make(map[string]struct{ CreatedAt, UpdatedAt int64 }),
+		customResourceTypeTimestamps: make(map[string]struct{ CreatedAt, UpdatedAt int64 }),
 	}
 }
 
@@ -75,7 +84,7 @@ func (m *MemoryStore) CreateUser(u *model.User) error {
 
 	// 设置默认 schemas（如果未提供）
 	if len(u.Schemas) == 0 {
-		u.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:User"}
+		u.Schemas = []string{string(model.UserSchema)}
 	}
 
 	m.users[u.ID] = u
@@ -182,8 +191,14 @@ func (m *MemoryStore) UpdateUser(u *model.User) error {
 	existing.DisplayName = u.DisplayName
 	existing.NickName = u.NickName
 	existing.ProfileUrl = u.ProfileUrl
+
+	// 处理 emails 的全量覆盖
 	existing.Emails = u.Emails
+
+	// 处理 roles 的全量覆盖
 	existing.Roles = u.Roles
+
+	existing.EnterpriseUserExtension = u.EnterpriseUserExtension
 	// 更新 schemas（支持自定义 schemas）
 	if len(u.Schemas) > 0 {
 		existing.Schemas = u.Schemas
@@ -209,14 +224,20 @@ func (m *MemoryStore) PatchUser(id string, ops []model.PatchOperation) error {
 		return model.ErrNotFound
 	}
 
+	// 创建用户对象的深拷贝，避免在错误时修改原始数据
+	uCopy, err := deepCopyUser(u)
+	if err != nil {
+		return fmt.Errorf("failed to copy user: %w", err)
+	}
+
 	// 如果更新了用户名，需要更新索引
 	oldUserName := strings.ToLower(u.UserName)
-	err := PatchResource(m, id, u, ops)
+	err = PatchResource(m, id, uCopy, ops)
 	if err != nil {
 		return err
 	}
 
-	newUserName := strings.ToLower(u.UserName)
+	newUserName := strings.ToLower(uCopy.UserName)
 	if oldUserName != newUserName {
 		delete(m.userNameIdx, oldUserName)
 		m.userNameIdx[newUserName] = id
@@ -229,11 +250,13 @@ func (m *MemoryStore) PatchUser(id string, ops []model.PatchOperation) error {
 		m.userTimestamps[id] = timestamp
 
 		// 更新 meta 属性
-		u.Meta.LastModified = now.Format(time.RFC3339)
-		u.Meta.Version = util.GenerateVersion()
+		uCopy.Meta.LastModified = now.Format(time.RFC3339)
+		uCopy.Meta.Version = util.GenerateVersion()
 		// Location 由API层动态生成
 	}
 
+	// 只有在没有错误时才更新原始用户对象
+	m.users[id] = uCopy
 	return nil
 }
 
@@ -253,6 +276,19 @@ func (m *MemoryStore) DeleteUser(id string) error {
 	delete(m.userTimestamps, id)
 	delete(m.users, id)
 	return nil
+}
+
+// deepCopyUser 创建用户对象的深拷贝
+func deepCopyUser(u *model.User) (*model.User, error) {
+	data, err := json.Marshal(u)
+	if err != nil {
+		return nil, err
+	}
+	var copy model.User
+	if err := json.Unmarshal(data, &copy); err != nil {
+		return nil, err
+	}
+	return &copy, nil
 }
 
 // ---------------------- Group 实现 ----------------------
@@ -303,7 +339,7 @@ func (m *MemoryStore) CreateGroup(g *model.Group) error {
 
 	// 设置默认 schemas（如果未提供）
 	if len(g.Schemas) == 0 {
-		g.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:Group"}
+		g.Schemas = []string{string(model.GroupSchema)}
 	}
 
 	m.groups[g.ID] = g
@@ -718,38 +754,20 @@ func (m *MemoryStore) RemoveRoleFromUser(userID, roleValue string) error {
 // paginateUsers 用户分页
 // 优化：边界检查，避免不必要的切片操作
 func (m *MemoryStore) paginateUsers(users []model.User, startIndex, count int) []model.User {
-	start := startIndex - 1
-	if start < 0 {
-		start = 0
-	}
-	if start >= len(users) {
+	result := Paginate(users, startIndex, count)
+	if result == nil {
 		return []model.User{}
 	}
-
-	end := start + count
-	if end > len(users) {
-		end = len(users)
-	}
-
-	return users[start:end]
+	return result.([]model.User)
 }
 
 // paginateGroups 组分页
 func (m *MemoryStore) paginateGroups(groups []model.Group, startIndex, count int) []model.Group {
-	start := startIndex - 1
-	if start < 0 {
-		start = 0
-	}
-	if start >= len(groups) {
+	result := Paginate(groups, startIndex, count)
+	if result == nil {
 		return []model.Group{}
 	}
-
-	end := start + count
-	if end > len(groups) {
-		end = len(groups)
-	}
-
-	return groups[start:end]
+	return result.([]model.Group)
 }
 
 // filterUsers 过滤用户列表
@@ -878,5 +896,445 @@ func groupToMap(g *model.Group) (map[string]interface{}, error) {
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return nil, err
 	}
+	return obj, nil
+}
+
+// ---------------------- 自定义资源类型实现 ----------------------
+
+// CreateCustomResourceType 创建自定义资源类型
+func (m *MemoryStore) CreateCustomResourceType(crt *model.CustomResourceType) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 验证自定义资源类型
+	if err := model.ValidateCustomResourceType(crt); err != nil {
+		return err
+	}
+
+	// 检查资源类型名称唯一性
+	lowerName := strings.ToLower(crt.Name)
+	if _, exists := m.customResourceTypeIdx[lowerName]; exists {
+		return model.ErrUniqueness
+	}
+
+	// 记录时间戳
+	now := time.Now()
+	timestamp := struct{ CreatedAt, UpdatedAt int64 }{now.Unix(), now.Unix()}
+	m.customResourceTypeTimestamps[crt.ID] = timestamp
+
+	// 生成 meta 属性
+	createdAt := time.Unix(timestamp.CreatedAt, 0)
+	updatedAt := time.Unix(timestamp.UpdatedAt, 0)
+	created := createdAt.Format(time.RFC3339Nano)
+	lastModified := updatedAt.Format(time.RFC3339Nano)
+
+	crt.Meta = &model.Meta{
+		ResourceType: "ResourceType",
+		Created:      created,
+		LastModified: lastModified,
+		Location:     "", // 由API层动态生成
+	}
+
+	// 设置默认 schemas
+	if len(crt.Schemas) == 0 {
+		crt.Schemas = []string{model.ResourceTypeSchema}
+	}
+
+	m.customResourceTypes[crt.ID] = crt
+	m.customResourceTypeIdx[lowerName] = crt.ID
+
+	// 初始化该资源类型的自定义资源存储
+	m.customResources[crt.ID] = make(map[string]*model.CustomResource)
+
+	return nil
+}
+
+// GetCustomResourceType 获取自定义资源类型
+func (m *MemoryStore) GetCustomResourceType(id string) (*model.CustomResourceType, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	crt, ok := m.customResourceTypes[id]
+	if !ok {
+		return nil, model.ErrNotFound
+	}
+	return crt, nil
+}
+
+// ListCustomResourceTypes 列出所有自定义资源类型
+func (m *MemoryStore) ListCustomResourceTypes() ([]model.CustomResourceType, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	list := make([]model.CustomResourceType, 0, len(m.customResourceTypes))
+	for _, crt := range m.customResourceTypes {
+		list = append(list, *crt)
+	}
+	return list, nil
+}
+
+// UpdateCustomResourceType 更新自定义资源类型
+func (m *MemoryStore) UpdateCustomResourceType(crt *model.CustomResourceType) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existing, ok := m.customResourceTypes[crt.ID]
+	if !ok {
+		return model.ErrNotFound
+	}
+
+	// 验证自定义资源类型
+	if err := model.ValidateCustomResourceType(crt); err != nil {
+		return err
+	}
+
+	// 检查资源类型名称唯一性（排除自己）
+	lowerName := strings.ToLower(crt.Name)
+	if existingID, exists := m.customResourceTypeIdx[lowerName]; exists && existingID != crt.ID {
+		return model.ErrUniqueness
+	}
+
+	// 更新索引：如果名称改变，删除旧索引并添加新索引
+	oldLowerName := strings.ToLower(existing.Name)
+	if oldLowerName != lowerName {
+		delete(m.customResourceTypeIdx, oldLowerName)
+		m.customResourceTypeIdx[lowerName] = crt.ID
+	}
+
+	// 更新时间戳和 meta 属性
+	now := time.Now()
+	if timestamp, exists := m.customResourceTypeTimestamps[crt.ID]; exists {
+		timestamp.UpdatedAt = now.Unix()
+		m.customResourceTypeTimestamps[crt.ID] = timestamp
+	}
+
+	// 更新 meta 属性
+	existing.Meta.LastModified = now.Format(time.RFC3339Nano)
+	// Location 由API层动态生成
+
+	// 从请求体复制字段到现有对象
+	existing.Name = crt.Name
+	existing.Endpoint = crt.Endpoint
+	existing.Description = crt.Description
+	existing.Schema = crt.Schema
+	existing.SchemaExtensions = crt.SchemaExtensions
+	// 更新 schemas
+	if len(crt.Schemas) > 0 {
+		existing.Schemas = crt.Schemas
+	}
+
+	m.customResourceTypes[crt.ID] = existing
+	return nil
+}
+
+// DeleteCustomResourceType 删除自定义资源类型
+func (m *MemoryStore) DeleteCustomResourceType(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	crt, ok := m.customResourceTypes[id]
+	if !ok {
+		return model.ErrNotFound
+	}
+
+	// 清理索引和时间戳
+	delete(m.customResourceTypeIdx, strings.ToLower(crt.Name))
+	delete(m.customResourceTypeTimestamps, id)
+	delete(m.customResourceTypes, id)
+	delete(m.customResources, id) // 同时删除该资源类型的所有自定义资源
+
+	return nil
+}
+
+// ---------------------- 自定义资源实现 ----------------------
+
+// CreateCustomResource 创建自定义资源
+func (m *MemoryStore) CreateCustomResource(cr *model.CustomResource) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 验证资源类型是否存在
+	if _, ok := m.customResourceTypes[cr.ResourceType]; !ok {
+		return model.ErrNotFound
+	}
+
+	// 验证自定义资源
+	if err := model.ValidateCustomResource(cr); err != nil {
+		return err
+	}
+
+	// 初始化该资源类型的自定义资源存储（如果不存在）
+	if _, ok := m.customResources[cr.ResourceType]; !ok {
+		m.customResources[cr.ResourceType] = make(map[string]*model.CustomResource)
+	}
+
+	// 记录时间戳
+	now := time.Now()
+
+	// 生成 meta 属性
+	created := now.Format(time.RFC3339Nano)
+	lastModified := now.Format(time.RFC3339Nano)
+	version := util.GenerateVersion()
+
+	cr.Meta = &model.Meta{
+		ResourceType: cr.ResourceType,
+		Created:      created,
+		LastModified: lastModified,
+		Location:     "", // 由API层动态生成
+		Version:      version,
+	}
+
+	// 设置版本
+	cr.Version = version
+
+	m.customResources[cr.ResourceType][cr.ID] = cr
+	return nil
+}
+
+// GetCustomResource 获取自定义资源
+func (m *MemoryStore) GetCustomResource(id, resourceType string) (*model.CustomResource, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// 验证资源类型是否存在
+	if _, ok := m.customResourceTypes[resourceType]; !ok {
+		return nil, model.ErrNotFound
+	}
+
+	// 验证资源是否存在
+	if resources, ok := m.customResources[resourceType]; ok {
+		if cr, ok := resources[id]; ok {
+			return cr, nil
+		}
+	}
+
+	return nil, model.ErrNotFound
+}
+
+// ListCustomResources 列出自定义资源
+func (m *MemoryStore) ListCustomResources(q *model.CustomResourceQuery) ([]model.CustomResource, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// 验证资源类型是否存在
+	if _, ok := m.customResourceTypes[q.ResourceType]; !ok {
+		return nil, 0, model.ErrNotFound
+	}
+
+	// 获取该资源类型的所有资源
+	resources, ok := m.customResources[q.ResourceType]
+	if !ok {
+		return []model.CustomResource{}, 0, nil
+	}
+
+	// 预分配切片容量
+	list := make([]model.CustomResource, 0, len(resources))
+	for _, cr := range resources {
+		list = append(list, *cr)
+	}
+
+	// 应用过滤器
+	if q.Filter != "" {
+		filtered, err := m.filterCustomResources(list, q.Filter)
+		if err != nil {
+			return nil, 0, err
+		}
+		list = filtered
+	}
+
+	total := int64(len(list))
+
+	// 排序
+	if q.SortBy != "" {
+		m.sortCustomResources(list, q.SortBy, q.SortOrder)
+	}
+
+	// 分页
+	return m.paginateCustomResources(list, q.StartIndex, q.Count), total, nil
+}
+
+// UpdateCustomResource 更新自定义资源
+func (m *MemoryStore) UpdateCustomResource(cr *model.CustomResource) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 验证资源类型是否存在
+	if _, ok := m.customResourceTypes[cr.ResourceType]; !ok {
+		return model.ErrNotFound
+	}
+
+	// 验证自定义资源
+	if err := model.ValidateCustomResource(cr); err != nil {
+		return err
+	}
+
+	// 验证资源是否存在
+	if resources, ok := m.customResources[cr.ResourceType]; ok {
+		if existing, ok := resources[cr.ID]; ok {
+			// 更新时间戳和 meta 属性
+			now := time.Now()
+			existing.Meta.LastModified = now.Format(time.RFC3339Nano)
+			existing.Meta.Version = util.GenerateVersion()
+			// Location 由API层动态生成
+
+			// 更新版本
+			existing.Version = existing.Meta.Version
+
+			// 从请求体复制字段到现有对象
+			existing.Attributes = cr.Attributes
+			existing.ExternalID = cr.ExternalID
+
+			m.customResources[cr.ResourceType][cr.ID] = existing
+			return nil
+		}
+	}
+
+	return model.ErrNotFound
+}
+
+// PatchCustomResource 补丁更新自定义资源
+func (m *MemoryStore) PatchCustomResource(id, resourceType string, ops []model.PatchOperation) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 验证资源类型是否存在
+	if _, ok := m.customResourceTypes[resourceType]; !ok {
+		return model.ErrNotFound
+	}
+
+	// 验证资源是否存在
+	if resources, ok := m.customResources[resourceType]; ok {
+		if cr, ok := resources[id]; ok {
+			// 应用补丁操作
+			err := PatchResource(m, id, cr, ops)
+			if err != nil {
+				return err
+			}
+
+			// 更新时间戳和 meta 属性
+			now := time.Now()
+			cr.Meta.LastModified = now.Format(time.RFC3339Nano)
+			cr.Meta.Version = util.GenerateVersion()
+			// Location 由API层动态生成
+
+			// 更新版本
+			cr.Version = cr.Meta.Version
+
+			m.customResources[resourceType][id] = cr
+			return nil
+		}
+	}
+
+	return model.ErrNotFound
+}
+
+// DeleteCustomResource 删除自定义资源
+func (m *MemoryStore) DeleteCustomResource(id, resourceType string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 验证资源类型是否存在
+	if _, ok := m.customResourceTypes[resourceType]; !ok {
+		return model.ErrNotFound
+	}
+
+	// 验证资源是否存在
+	if resources, ok := m.customResources[resourceType]; ok {
+		if _, ok := resources[id]; ok {
+			delete(resources, id)
+			return nil
+		}
+	}
+
+	return model.ErrNotFound
+}
+
+// ---------------------- 自定义资源辅助方法 ----------------------
+
+// paginateCustomResources 自定义资源分页
+func (m *MemoryStore) paginateCustomResources(resources []model.CustomResource, startIndex, count int) []model.CustomResource {
+	result := Paginate(resources, startIndex, count)
+	if result == nil {
+		return []model.CustomResource{}
+	}
+	return result.([]model.CustomResource)
+}
+
+// filterCustomResources 过滤自定义资源列表
+func (m *MemoryStore) filterCustomResources(resources []model.CustomResource, filter string) ([]model.CustomResource, error) {
+	node, err := util.ParseFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	// 预分配切片容量
+	result := make([]model.CustomResource, 0, len(resources))
+	for _, cr := range resources {
+		obj, err := customResourceToMap(&cr)
+		if err != nil {
+			return nil, err
+		}
+
+		match, err := util.MatchFilter(node, obj)
+		if err != nil {
+			return nil, err
+		}
+
+		if match {
+			result = append(result, cr)
+		}
+	}
+
+	return result, nil
+}
+
+// sortCustomResources 排序自定义资源列表
+func (m *MemoryStore) sortCustomResources(resources []model.CustomResource, sortBy, sortOrder string) {
+	less := func(i, j int) bool {
+		var cmp int
+		switch sortBy {
+		case "id":
+			cmp = strings.Compare(resources[i].ID, resources[j].ID)
+		default:
+			// 对于其他字段，尝试从 Attributes 中获取
+			val1, ok1 := resources[i].Attributes[sortBy]
+			val2, ok2 := resources[j].Attributes[sortBy]
+			if ok1 && ok2 {
+				if str1, ok := val1.(string); ok {
+					if str2, ok := val2.(string); ok {
+						cmp = strings.Compare(str1, str2)
+					}
+				}
+			}
+		}
+
+		if sortOrder == "descending" {
+			return cmp > 0
+		}
+		return cmp < 0
+	}
+
+	sort.Slice(resources, less)
+}
+
+// customResourceToMap 将自定义资源转换为map
+func customResourceToMap(cr *model.CustomResource) (map[string]interface{}, error) {
+	data, err := json.Marshal(cr)
+	if err != nil {
+		return nil, err
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, err
+	}
+
+	// 将 Attributes 中的字段合并到顶层
+	if attributes, ok := obj["attributes"].(map[string]interface{}); ok {
+		for k, v := range attributes {
+			obj[k] = v
+		}
+		delete(obj, "attributes")
+	}
+
 	return obj, nil
 }

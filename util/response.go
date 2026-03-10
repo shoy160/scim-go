@@ -18,7 +18,7 @@ func NewListResponse(schemas string, totalResults int, startIndex int, itemsPerP
 // NewErrorResponse 创建错误响应
 func NewErrorResponse(schemas string, status int, scimType string, detail string) model.ErrorResponse {
 	return model.ErrorResponse{
-		Schemas:  schemas,
+		Schemas:  []string{schemas},
 		Status:   status,
 		ScimType: scimType,
 		Detail:   detail,

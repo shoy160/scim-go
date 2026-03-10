@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -255,7 +256,7 @@ func TestListUsersSCIMCompliance(t *testing.T) {
 					return
 				}
 
-				if errorResp.Schemas != "urn:ietf:params:scim:api:messages:2.0:Error" {
+				if !slices.Contains(errorResp.Schemas, model.ErrorSchema.String()) {
 					t.Error("Invalid error schema")
 				}
 				if errorResp.Status != tc.expectedCode {
@@ -454,7 +455,7 @@ func TestListGroupsSCIMCompliance(t *testing.T) {
 					return
 				}
 
-				if errorResp.Schemas != "urn:ietf:params:scim:api:messages:2.0:Error" {
+				if !slices.Contains(errorResp.Schemas, model.ErrorSchema.String()) {
 					t.Error("Invalid error schema")
 				}
 				if errorResp.Status != tc.expectedCode {
@@ -472,8 +473,8 @@ func createComplianceTestUsers(router *gin.Engine, t *testing.T) {
 			UserName: "user1",
 			Name: struct {
 				Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-				GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-				FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+				GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+				FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 				MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 			}{
 				GivenName:  "John",
@@ -485,8 +486,8 @@ func createComplianceTestUsers(router *gin.Engine, t *testing.T) {
 			UserName: "user2",
 			Name: struct {
 				Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-				GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-				FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+				GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+				FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 				MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 			}{
 				GivenName:  "Jane",
@@ -498,8 +499,8 @@ func createComplianceTestUsers(router *gin.Engine, t *testing.T) {
 			UserName: "user3",
 			Name: struct {
 				Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-				GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-				FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+				GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+				FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 				MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 			}{
 				GivenName:  "Bob",

@@ -23,7 +23,7 @@ func Auth(validToken string) gin.HandlerFunc {
 		// 快速路径：直接比较，避免字符串分割操作
 		if authHeader != expectedPrefix {
 			c.JSON(http.StatusUnauthorized, model.ErrorResponse{
-				Schemas:  model.ErrorSchema.String(),
+				Schemas:  []string{model.ErrorSchema.String()},
 				Detail:   "Invalid or missing Bearer Token",
 				Status:   http.StatusUnauthorized,
 				ScimType: "invalidToken",
@@ -43,7 +43,7 @@ func BindQuery() gin.HandlerFunc {
 		var q model.ResourceQuery
 		if err := c.ShouldBindQuery(&q); err != nil {
 			c.JSON(http.StatusBadRequest, model.ErrorResponse{
-				Schemas:  model.ErrorSchema.String(),
+				Schemas:  []string{model.ErrorSchema.String()},
 				Detail:   "Invalid query parameters: " + err.Error(),
 				Status:   http.StatusBadRequest,
 				ScimType: "invalidValue",
@@ -63,7 +63,7 @@ func BindQuery() gin.HandlerFunc {
 		// 验证查询参数
 		if err := q.Validate(); err != nil {
 			c.JSON(http.StatusBadRequest, model.ErrorResponse{
-				Schemas:  model.ErrorSchema.String(),
+				Schemas:  []string{model.ErrorSchema.String()},
 				Detail:   "Invalid query parameters: " + err.Error(),
 				Status:   http.StatusBadRequest,
 				ScimType: "invalidValue",
@@ -76,7 +76,7 @@ func BindQuery() gin.HandlerFunc {
 		if q.Attributes != "" {
 			if err := util.ValidateAttributeFormat(q.Attributes); err != nil {
 				c.JSON(http.StatusBadRequest, model.ErrorResponse{
-					Schemas:  model.ErrorSchema.String(),
+					Schemas:  []string{model.ErrorSchema.String()},
 					Detail:   "Invalid attributes format: " + err.Error(),
 					Status:   http.StatusBadRequest,
 					ScimType: "invalidSyntax",
@@ -88,7 +88,7 @@ func BindQuery() gin.HandlerFunc {
 		if q.ExcludedAttributes != "" {
 			if err := util.ValidateAttributeFormat(q.ExcludedAttributes); err != nil {
 				c.JSON(http.StatusBadRequest, model.ErrorResponse{
-					Schemas:  model.ErrorSchema.String(),
+					Schemas:  []string{model.ErrorSchema.String()},
 					Detail:   "Invalid excludedAttributes format: " + err.Error(),
 					Status:   http.StatusBadRequest,
 					ScimType: "invalidSyntax",
@@ -138,7 +138,7 @@ func Pagination(defaultCount, maxCount int) gin.HandlerFunc {
 		q, ok := c.Get("scim_query")
 		if !ok {
 			c.JSON(http.StatusInternalServerError, model.ErrorResponse{
-				Schemas:  model.ErrorSchema.String(),
+				Schemas:  []string{model.ErrorSchema.String()},
 				Detail:   "Query parameters not found",
 				Status:   http.StatusInternalServerError,
 				ScimType: "internalError",
@@ -272,8 +272,26 @@ func formatDuration(d time.Duration) string {
 // ErrorHandler 通用错误处理函数
 // 统一错误响应格式，简化代码
 func ErrorHandler(c *gin.Context, err error, status int, scimType string) {
+	// 记录错误日志
+	clientIP := c.ClientIP()
+	method := c.Request.Method
+	path := c.Request.URL.Path
+
+	// 获取请求参数
+	var params interface{}
+	if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "PATCH" {
+		var reqBody interface{}
+		if err := c.ShouldBindJSON(&reqBody); err == nil {
+			params = reqBody
+		}
+	}
+
+	// 记录API错误
+	util.LogAPIError("API Error", err, path, method, params, clientIP, status, "")
+
+	// 返回错误响应
 	c.JSON(status, model.ErrorResponse{
-		Schemas:  model.ErrorSchema.String(),
+		Schemas:  []string{model.ErrorSchema.String()},
 		Detail:   err.Error(),
 		Status:   status,
 		ScimType: scimType,
@@ -287,13 +305,18 @@ func Recovery() gin.HandlerFunc {
 		defer func() {
 			if err := recover(); err != nil {
 				// 记录panic信息
-				gin.DefaultErrorWriter.Write([]byte(
-					"[PANIC] " + c.Request.Method + " " + c.Request.URL.Path +
-						" - " + fmt.Sprintf("%v", err) + "\n",
-				))
+				clientIP := c.ClientIP()
+				method := c.Request.Method
+				path := c.Request.URL.Path
+
+				// 构建错误对象
+				panicErr := fmt.Errorf("%v", err)
+
+				// 记录致命错误
+				util.LogAPIError("API Panic", panicErr, path, method, nil, clientIP, http.StatusInternalServerError, "")
 
 				c.JSON(http.StatusInternalServerError, model.ErrorResponse{
-					Schemas:  model.ErrorSchema.String(),
+					Schemas:  []string{model.ErrorSchema.String()},
 					Detail:   "Internal server error",
 					Status:   http.StatusInternalServerError,
 					ScimType: "internalError",

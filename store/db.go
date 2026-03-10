@@ -25,6 +25,7 @@ func NewDB(db *gorm.DB, cache util.Cache) Store {
 	err := db.AutoMigrate(
 		&model.User{}, &model.Email{}, &model.Role{},
 		&model.Group{}, &model.Member{},
+		&model.CustomResourceType{}, &model.CustomResource{},
 	)
 	if err != nil {
 		panic("auto migrate table failed: " + err.Error())
@@ -55,7 +56,7 @@ func (d *DBStore) CreateUser(u *model.User) error {
 	u.Version = generateVersion()
 	// 设置默认 schemas（如果未提供）
 	if len(u.Schemas) == 0 {
-		u.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:User"}
+		u.Schemas = []string{string(model.UserSchema)}
 	}
 	// 去重处理：检查 emails 和 roles 是否有重复
 	u.Emails = deduplicateEmails(u.Emails)
@@ -199,26 +200,6 @@ func (d *DBStore) UpdateUser(u *model.User) error {
 		u.Emails = deduplicateEmails(u.Emails)
 		u.Roles = deduplicateRoles(u.Roles)
 
-		// 验证 emails 是否与其他用户的记录重复
-		if len(u.Emails) > 0 {
-			for _, email := range u.Emails {
-				var existingEmail model.Email
-				if err := tx.Where("value = ? AND user_id != ?", email.Value, u.ID).First(&existingEmail).Error; err == nil {
-					return fmt.Errorf("email already exists: %s", email.Value)
-				}
-			}
-		}
-
-		// 验证 roles 是否与其他用户的记录重复
-		if len(u.Roles) > 0 {
-			for _, role := range u.Roles {
-				var existingRole model.Role
-				if err := tx.Where("value = ? AND user_id != ?", role.Value, u.ID).First(&existingRole).Error; err == nil {
-					return fmt.Errorf("role already exists: %s", role.Value)
-				}
-			}
-		}
-
 		// 获取当前用户的 emails 和 roles
 		var currentEmails []model.Email
 		var currentRoles []model.Role
@@ -249,7 +230,7 @@ func (d *DBStore) UpdateUser(u *model.User) error {
 			targetRoleMap[strings.ToLower(role.Value)] = role
 		}
 
-		// 处理 emails 的增量更新
+		// 处理 emails 的全量覆盖
 		// 1. 删除不再存在的 emails
 		for emailValue, email := range currentEmailMap {
 			if _, exists := targetEmailMap[emailValue]; !exists {
@@ -268,7 +249,7 @@ func (d *DBStore) UpdateUser(u *model.User) error {
 			}
 		}
 
-		// 处理 roles 的增量更新
+		// 处理 roles 的全量覆盖
 		// 1. 删除不再存在的 roles
 		for roleValue, role := range currentRoleMap {
 			if _, exists := targetRoleMap[roleValue]; !exists {
@@ -301,8 +282,8 @@ func (d *DBStore) UpdateUser(u *model.User) error {
 		}
 		// UpdatedAt 由 GORM 的 autoUpdateTime 自动更新
 
-		// 更新用户基本信息
-		if err := tx.Model(&model.User{}).Where("id = ?", u.ID).Updates(map[string]interface{}{
+		// 构建更新数据
+		updateData := map[string]interface{}{
 			"user_name":    u.UserName,
 			"formatted":    u.Name.Formatted,
 			"given_name":   u.Name.GivenName,
@@ -314,7 +295,37 @@ func (d *DBStore) UpdateUser(u *model.User) error {
 			"profile_url":  u.ProfileUrl,
 			"version":      u.Version,
 			"schemas":      u.Schemas,
-		}).Error; err != nil {
+		}
+
+		// 企业扩展属性（添加空指针检查）
+		if u.EnterpriseUserExtension != nil {
+			updateData["employee_number"] = u.EmployeeNumber
+			updateData["cost_center"] = u.CostCenter
+			updateData["organization"] = u.Organization
+			updateData["division"] = u.Division
+			updateData["department"] = u.Department
+
+			// Manager 字段（添加空指针检查）
+			if u.Manager != nil {
+				updateData["manager_value"] = u.Manager.Value
+				updateData["manager_ref"] = u.Manager.Ref
+			} else {
+				updateData["manager_value"] = ""
+				updateData["manager_ref"] = ""
+			}
+		} else {
+			// 清除企业扩展属性
+			updateData["employee_number"] = ""
+			updateData["cost_center"] = ""
+			updateData["organization"] = ""
+			updateData["division"] = ""
+			updateData["department"] = ""
+			updateData["manager_value"] = ""
+			updateData["manager_ref"] = ""
+		}
+
+		// 更新用户基本信息
+		if err := tx.Model(&model.User{}).Where("id = ?", u.ID).Updates(updateData).Error; err != nil {
 			return err
 		}
 
@@ -473,8 +484,11 @@ func (d *DBStore) PatchUser(id string, ops []model.PatchOperation) error {
 		u.Version = generateVersion()
 		// UpdatedAt 由 GORM 的 autoUpdateTime 自动更新
 
-		// 保存更新
-		return tx.Session(&gorm.Session{FullSaveAssociations: true}).Save(&u).Error
+		// 保存更新（不自动保存关联，因为 emails 和 roles 已通过 syncEmails/syncRoles 处理）
+		// 清空 Emails 和 Roles 避免 GORM 重复保存
+		u.Emails = nil
+		u.Roles = nil
+		return tx.Save(&u).Error
 	})
 }
 
@@ -640,7 +654,7 @@ func (d *DBStore) CreateGroup(g *model.Group) error {
 	g.Version = generateVersion()
 	// 设置默认 schemas（如果未提供）
 	if len(g.Schemas) == 0 {
-		g.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:Group"}
+		g.Schemas = []string{string(model.GroupSchema)}
 	}
 	return d.db.Create(g).Error
 }
@@ -1133,4 +1147,350 @@ func (d *DBStore) toSnakeCase(s string) string {
 		result.WriteRune(r)
 	}
 	return strings.ToLower(result.String())
+}
+
+// ---------------------- 自定义资源类型相关 ----------------------
+
+// CreateCustomResourceType 创建自定义资源类型
+func (d *DBStore) CreateCustomResourceType(crt *model.CustomResourceType) error {
+	// 检查资源类型名称唯一性
+	var count int64
+	d.db.Model(&model.CustomResourceType{}).Where("name = ?", crt.Name).Count(&count)
+	if count > 0 {
+		return model.ErrUniqueness
+	}
+	// 设置默认 schemas（如果未提供）
+	if len(crt.Schemas) == 0 {
+		crt.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"}
+	}
+	// 创建自定义资源类型
+	if err := d.db.Create(crt).Error; err != nil {
+		return err
+	}
+	// 清除相关缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Delete(ctx, "customResourceTypes:list")
+		d.cache.Delete(ctx, "customResourceType:"+crt.ID)
+	}
+	return nil
+}
+
+// GetCustomResourceType 获取自定义资源类型
+func (d *DBStore) GetCustomResourceType(id string) (*model.CustomResourceType, error) {
+	// 尝试从缓存获取
+	if d.cache != nil {
+		ctx := context.Background()
+		var crt model.CustomResourceType
+		err := d.cache.Get(ctx, "customResourceType:"+id, &crt)
+		if err == nil {
+			return &crt, nil
+		}
+	}
+	// 从数据库获取
+	var crt model.CustomResourceType
+	err := d.db.First(&crt, "id = ?", id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, model.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	// 存入缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Set(ctx, "customResourceType:"+id, crt, 5*time.Minute)
+	}
+	return &crt, nil
+}
+
+// ListCustomResourceTypes 列出自定义资源类型
+func (d *DBStore) ListCustomResourceTypes() ([]model.CustomResourceType, error) {
+	// 尝试从缓存获取
+	if d.cache != nil {
+		ctx := context.Background()
+		var crts []model.CustomResourceType
+		err := d.cache.Get(ctx, "customResourceTypes:list", &crts)
+		if err == nil {
+			return crts, nil
+		}
+	}
+	// 从数据库获取
+	var crts []model.CustomResourceType
+	if err := d.db.Find(&crts).Error; err != nil {
+		return nil, err
+	}
+	// 存入缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Set(ctx, "customResourceTypes:list", crts, 2*time.Minute)
+	}
+	return crts, nil
+}
+
+// UpdateCustomResourceType 更新自定义资源类型
+func (d *DBStore) UpdateCustomResourceType(crt *model.CustomResourceType) error {
+	// 检查自定义资源类型是否存在
+	var existing model.CustomResourceType
+	if err := d.db.First(&existing, "id = ?", crt.ID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.ErrNotFound
+		}
+		return err
+	}
+	// 检查名称唯一性（排除自己）
+	var count int64
+	d.db.Model(&model.CustomResourceType{}).Where("name = ? AND id != ?", crt.Name, crt.ID).Count(&count)
+	if count > 0 {
+		return model.ErrUniqueness
+	}
+	// 更新 schemas（支持自定义 schemas）
+	if len(crt.Schemas) == 0 {
+		crt.Schemas = existing.Schemas
+	}
+	// 保留原有的创建时间
+	if existing.CreatedAt != "" {
+		crt.CreatedAt = existing.CreatedAt
+	}
+	// 更新自定义资源类型
+	if err := d.db.Save(crt).Error; err != nil {
+		return err
+	}
+	// 清除相关缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Delete(ctx, "customResourceTypes:list")
+		d.cache.Delete(ctx, "customResourceType:"+crt.ID)
+	}
+	return nil
+}
+
+// DeleteCustomResourceType 删除自定义资源类型
+func (d *DBStore) DeleteCustomResourceType(id string) error {
+	// 检查是否有关联的自定义资源
+	var count int64
+	d.db.Model(&model.CustomResource{}).Where("resource_type = ?", id).Count(&count)
+	if count > 0 {
+		return model.ErrInternal
+	}
+	// 删除自定义资源类型
+	result := d.db.Delete(&model.CustomResourceType{}, "id = ?", id)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return model.ErrNotFound
+	}
+	// 清除相关缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Delete(ctx, "customResourceTypes:list")
+		d.cache.Delete(ctx, "customResourceType:"+id)
+	}
+	return nil
+}
+
+// ---------------------- 自定义资源相关 ----------------------
+
+// CreateCustomResource 创建自定义资源
+func (d *DBStore) CreateCustomResource(cr *model.CustomResource) error {
+	// 检查自定义资源类型是否存在
+	var crt model.CustomResourceType
+	if err := d.db.First(&crt, "id = ?", cr.ResourceType).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.ErrNotFound
+		}
+		return err
+	}
+	// 设置默认 schemas（如果未提供）
+	if len(cr.Schemas) == 0 {
+		cr.Schemas = []string{crt.Schema}
+	}
+	// 设置版本号
+	cr.Version = generateVersion()
+	// 创建自定义资源
+	if err := d.db.Create(cr).Error; err != nil {
+		return err
+	}
+	// 清除相关缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Delete(ctx, "customResources:list:"+cr.ResourceType)
+		d.cache.Delete(ctx, "customResource:"+cr.ResourceType+":"+cr.ID)
+	}
+	return nil
+}
+
+// GetCustomResource 获取自定义资源
+func (d *DBStore) GetCustomResource(id, resourceType string) (*model.CustomResource, error) {
+	// 尝试从缓存获取
+	if d.cache != nil {
+		ctx := context.Background()
+		var cr model.CustomResource
+		err := d.cache.Get(ctx, "customResource:"+resourceType+":"+id, &cr)
+		if err == nil {
+			return &cr, nil
+		}
+	}
+	// 从数据库获取
+	var cr model.CustomResource
+	err := d.db.Where("id = ? AND resource_type = ?", id, resourceType).First(&cr).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, model.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	// 存入缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Set(ctx, "customResource:"+resourceType+":"+id, cr, 5*time.Minute)
+	}
+	return &cr, nil
+}
+
+// ListCustomResources 列出自定义资源
+func (d *DBStore) ListCustomResources(q *model.CustomResourceQuery) ([]model.CustomResource, int64, error) {
+	// 构建缓存键
+	cacheKey := fmt.Sprintf("customResources:list:%s:%s:%d:%d:%s:%s",
+		q.ResourceType, q.Filter, q.StartIndex, q.Count, q.SortBy, q.SortOrder)
+
+	// 尝试从缓存获取
+	if d.cache != nil {
+		ctx := context.Background()
+		var result struct {
+			Resources []model.CustomResource
+			Total     int64
+		}
+		err := d.cache.Get(ctx, cacheKey, &result)
+		if err == nil {
+			return result.Resources, result.Total, nil
+		}
+	}
+
+	// 从数据库获取
+	var list []model.CustomResource
+	var total int64
+
+	query := d.db.Where("resource_type = ?", q.ResourceType)
+
+	// 应用过滤器
+	if q.Filter != "" {
+		// 这里可以添加过滤器处理逻辑
+	}
+
+	// 统计总数
+	if err := query.Model(&model.CustomResource{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 分页
+	offset := (q.StartIndex - 1) * q.Count
+	query = query.Offset(offset).Limit(q.Count)
+
+	// 排序
+	if q.SortBy != "" {
+		sort := d.toSnakeCase(q.SortBy)
+		if q.SortOrder == "descending" {
+			sort += " DESC"
+		} else {
+			sort += " ASC"
+		}
+		query = query.Order(sort)
+	}
+
+	// 执行查询
+	if err := query.Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 存入缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		result := struct {
+			Resources []model.CustomResource
+			Total     int64
+		}{
+			Resources: list,
+			Total:     total,
+		}
+		d.cache.Set(ctx, cacheKey, result, 2*time.Minute)
+	}
+
+	return list, total, nil
+}
+
+// UpdateCustomResource 更新自定义资源
+func (d *DBStore) UpdateCustomResource(cr *model.CustomResource) error {
+	// 检查自定义资源是否存在
+	var existing model.CustomResource
+	if err := d.db.Where("id = ? AND resource_type = ?", cr.ID, cr.ResourceType).First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.ErrNotFound
+		}
+		return err
+	}
+	// 更新版本号
+	cr.Version = generateVersion()
+	// 保留原有的创建时间
+	if existing.CreatedAt != "" {
+		cr.CreatedAt = existing.CreatedAt
+	}
+	// 更新自定义资源
+	if err := d.db.Save(cr).Error; err != nil {
+		return err
+	}
+	// 清除相关缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Delete(ctx, "customResources:list:"+cr.ResourceType)
+		d.cache.Delete(ctx, "customResource:"+cr.ResourceType+":"+cr.ID)
+	}
+	return nil
+}
+
+// PatchCustomResource 补丁更新自定义资源
+func (d *DBStore) PatchCustomResource(id, resourceType string, ops []model.PatchOperation) error {
+	// 获取自定义资源
+	cr, err := d.GetCustomResource(id, resourceType)
+	if err != nil {
+		return err
+	}
+	// 应用补丁操作
+	err = PatchResource(d, id, cr, ops)
+	if err != nil {
+		return err
+	}
+	// 更新版本号
+	cr.Version = generateVersion()
+	// 保存更新
+	if err := d.db.Save(cr).Error; err != nil {
+		return err
+	}
+	// 清除相关缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Delete(ctx, "customResources:list:"+resourceType)
+		d.cache.Delete(ctx, "customResource:"+resourceType+":"+id)
+	}
+	return nil
+}
+
+// DeleteCustomResource 删除自定义资源
+func (d *DBStore) DeleteCustomResource(id, resourceType string) error {
+	// 删除自定义资源
+	result := d.db.Where("id = ? AND resource_type = ?", id, resourceType).Delete(&model.CustomResource{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return model.ErrNotFound
+	}
+	// 清除相关缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Delete(ctx, "customResources:list:"+resourceType)
+		d.cache.Delete(ctx, "customResource:"+resourceType+":"+id)
+	}
+	return nil
 }

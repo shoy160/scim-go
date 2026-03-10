@@ -24,12 +24,12 @@ func PopulateMeta(resourceType string, id string, createdAt, updatedAt time.Time
 		Version:      version,
 	}
 
-	// 从数据库时间戳生成 ISO 8601 格式时间（使用纳秒精度）
+	// 根据配置的时间精确度格式化时间
 	if !createdAt.IsZero() {
-		meta.Created = createdAt.Format("2006-01-02T15:04:05.999999999Z07:00")
+		meta.Created = FormatTimeToISO8601(createdAt)
 	}
 	if !updatedAt.IsZero() {
-		meta.LastModified = updatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")
+		meta.LastModified = FormatTimeToISO8601(updatedAt)
 	}
 
 	// 动态生成 location
@@ -50,7 +50,7 @@ func GenerateGroupMeta(baseURL string, groupID string, createdAt, updatedAt time
 
 // UpdateMeta 更新meta数据
 func UpdateMeta(meta *model.Meta, baseURL string, id string, resourceType string) {
-	meta.LastModified = time.Now().Format("2006-01-02T15:04:05.999999999Z07:00")
+	meta.LastModified = FormatTimeToISO8601(time.Now())
 	meta.Version = GenerateVersion()
 	meta.Location = baseURL + "/scim/v2/" + resourceType + "s/" + id
 }

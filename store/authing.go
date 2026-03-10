@@ -834,3 +834,73 @@ func (s *AuthingStore) RemoveRoleFromUser(userID, roleValue string) error {
 	user.Roles = updatedRoles
 	return s.UpdateUser(user)
 }
+
+// ---------------------- 自定义资源类型相关 ----------------------
+
+// CreateCustomResourceType 创建自定义资源类型
+func (s *AuthingStore) CreateCustomResourceType(crt *model.CustomResourceType) error {
+	// Authing 不直接支持自定义资源类型，返回错误
+	return model.ErrInternal
+}
+
+// GetCustomResourceType 获取自定义资源类型
+func (s *AuthingStore) GetCustomResourceType(id string) (*model.CustomResourceType, error) {
+	// Authing 不直接支持自定义资源类型，返回错误
+	return nil, model.ErrNotFound
+}
+
+// ListCustomResourceTypes 列出自定义资源类型
+func (s *AuthingStore) ListCustomResourceTypes() ([]model.CustomResourceType, error) {
+	// Authing 不直接支持自定义资源类型，返回空列表
+	return []model.CustomResourceType{}, nil
+}
+
+// UpdateCustomResourceType 更新自定义资源类型
+func (s *AuthingStore) UpdateCustomResourceType(crt *model.CustomResourceType) error {
+	// Authing 不直接支持自定义资源类型，返回错误
+	return model.ErrInternal
+}
+
+// DeleteCustomResourceType 删除自定义资源类型
+func (s *AuthingStore) DeleteCustomResourceType(id string) error {
+	// Authing 不直接支持自定义资源类型，返回错误
+	return model.ErrInternal
+}
+
+// ---------------------- 自定义资源相关 ----------------------
+
+// CreateCustomResource 创建自定义资源
+func (s *AuthingStore) CreateCustomResource(cr *model.CustomResource) error {
+	// Authing 不直接支持自定义资源，返回错误
+	return model.ErrInternal
+}
+
+// GetCustomResource 获取自定义资源
+func (s *AuthingStore) GetCustomResource(id, resourceType string) (*model.CustomResource, error) {
+	// Authing 不直接支持自定义资源，返回错误
+	return nil, model.ErrNotFound
+}
+
+// ListCustomResources 列出自定义资源
+func (s *AuthingStore) ListCustomResources(q *model.CustomResourceQuery) ([]model.CustomResource, int64, error) {
+	// Authing 不直接支持自定义资源，返回空列表
+	return []model.CustomResource{}, 0, nil
+}
+
+// UpdateCustomResource 更新自定义资源
+func (s *AuthingStore) UpdateCustomResource(cr *model.CustomResource) error {
+	// Authing 不直接支持自定义资源，返回错误
+	return model.ErrInternal
+}
+
+// PatchCustomResource 补丁更新自定义资源
+func (s *AuthingStore) PatchCustomResource(id, resourceType string, ops []model.PatchOperation) error {
+	// Authing 不直接支持自定义资源，返回错误
+	return model.ErrInternal
+}
+
+// DeleteCustomResource 删除自定义资源
+func (s *AuthingStore) DeleteCustomResource(id, resourceType string) error {
+	// Authing 不直接支持自定义资源，返回错误
+	return model.ErrInternal
+}

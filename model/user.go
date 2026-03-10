@@ -35,6 +35,22 @@ func (s *StringList) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, s)
 }
 
+// Manager SCIM 2.0 企业用户扩展中的manager字段
+type Manager struct {
+	Value string `json:"value,omitempty" gorm:"type:varchar(64);column:manager_value"`
+	Ref   string `json:"$ref,omitempty" gorm:"type:varchar(255);column:manager_ref;"`
+}
+
+// EnterpriseUserExtension SCIM 2.0 企业用户扩展模型（RFC 7643）
+type EnterpriseUserExtension struct {
+	EmployeeNumber string   `json:"employeeNumber,omitempty" gorm:"type:varchar(64);column:employee_number"`
+	CostCenter     string   `json:"costCenter,omitempty" gorm:"type:varchar(64);column:cost_center"`
+	Organization   string   `json:"organization,omitempty" gorm:"type:varchar(128);column:organization"`
+	Division       string   `json:"division,omitempty" gorm:"type:varchar(128);column:division"`
+	Department     string   `json:"department,omitempty" gorm:"type:varchar(128);column:department"`
+	Manager        *Manager `json:"manager,omitempty" gorm:"embedded"`
+}
+
 // User SCIM 2.0标准用户模型（RFC 7644）
 type User struct {
 	ID          string     `json:"id" gorm:"primaryKey;type:varchar(64)"`
@@ -57,13 +73,16 @@ type User struct {
 	// 姓名信息（嵌套）
 	Name struct {
 		Formatted  string `json:"formatted,omitempty" gorm:"column:formatted;type:varchar(255)"`
-		GivenName  string `json:"givenName" gorm:"column:given_name;type:varchar(64);not null"`
-		FamilyName string `json:"familyName" gorm:"column:family_name;type:varchar(64);not null"`
+		GivenName  string `json:"givenName,omitempty" gorm:"column:given_name;type:varchar(64)"`
+		FamilyName string `json:"familyName,omitempty" gorm:"column:family_name;type:varchar(64)"`
 		MiddleName string `json:"middleName,omitempty" gorm:"column:middle_name;type:varchar(64)"`
 	} `json:"name" gorm:"embedded"`
 
+	// 企业扩展属性
+	*EnterpriseUserExtension `json:"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User,omitempty" gorm:"embedded"`
+
 	// 邮箱（多值属性，关联表）
-	Emails []Email `json:"emails" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	Emails []Email `json:"emails,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
 	// 角色（SCIM标准）
 	Roles []Role `json:"roles,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
 	// 用户所属的组（非数据库字段，动态填充）

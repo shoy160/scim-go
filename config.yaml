@@ -40,3 +40,15 @@ swagger:
   enabled: true
   # Swagger UI访问路径
   path: "/swagger"
+
+# 时间精确度配置
+time_precision:
+  # 时间精确度级别：second/minute/millisecond/microsecond/nanosecond
+  # second: 秒级精确度 (YYYY-MM-DD HH:MM:SS)
+  # minute: 分钟级精确度 (YYYY-MM-DD HH:MM)
+  # millisecond: 毫秒级精确度 (YYYY-MM-DD HH:MM:SS.mmm)
+  # microsecond: 微秒级精确度 (YYYY-MM-DD HH:MM:SS.mmmmmm)
+  # nanosecond: 纳秒级精确度 (YYYY-MM-DD HH:MM:SS.mmmmmmnnn)
+  level: "second"
+  # 时间格式配置（可选，如不设置则根据level自动生成）
+  # format: "2006-01-02 15:04:05"

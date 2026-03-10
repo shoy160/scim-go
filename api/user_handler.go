@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"scim-go/model"
 	"scim-go/store"
@@ -44,35 +45,36 @@ func (h *UserHandlers) ListUsers(c *gin.Context) {
 	// 获取查询参数
 	q := c.MustGet("scim_query").(*model.ResourceQuery)
 
-	// 验证过滤器语法
-	if err := h.validateFilter(c, q.Filter); err != nil {
-		return
+	// 构建列表请求
+	req := ListRequest{
+		Query: q,
+		ValidateFilter: func(filter string) error {
+			return h.validateFilter(c, filter)
+		},
+		ListFunc: func(q *model.ResourceQuery) ([]interface{}, int64, error) {
+			users, total, err := h.store.ListUsers(q)
+			if err != nil {
+				return nil, 0, err
+			}
+			resources := make([]interface{}, len(users))
+			for i, user := range users {
+				resources[i] = user
+			}
+			return resources, total, nil
+		},
+		ProcessFunc: func(resources []interface{}, q *model.ResourceQuery, host, proto string) []interface{} {
+			needGroups := h.needsGroups(q)
+			users := make([]model.User, len(resources))
+			for i, resource := range resources {
+				users[i] = resource.(model.User)
+			}
+			return h.processUserList(users, q, needGroups, host, proto)
+		},
+		Schema: h.cfg.ListSchema,
 	}
 
-	// 获取用户列表
-	users, total, err := h.store.ListUsers(q)
-	if err != nil {
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
-	}
-
-	// 检查是否需要加载用户的组信息
-	needGroups := h.needsGroups(q)
-
-	// 获取当前请求的协议和主机
-	proto := GetRequestProtocol(c)
-	host := c.Request.Host
-
-	// 处理用户列表并应用属性选择
-	resources := h.processUserList(users, q, needGroups, host, proto)
-	if resources == nil {
-		ErrorHandler(c, errors.New("failed to process user list"), http.StatusInternalServerError, "internalError")
-		return
-	}
-
-	// 构造SCIM标准列表响应
-	response := util.NewListResponse(h.cfg.ListSchema, int(total), q.StartIndex, q.Count, resources)
-	c.JSON(http.StatusOK, response)
+	// 处理列表请求
+	HandleList(c, req)
 }
 
 // GetUser 获取单个用户
@@ -94,33 +96,34 @@ func (h *UserHandlers) GetUser(c *gin.Context) {
 	id := c.Param("id")
 	q := c.MustGet("scim_query").(*model.ResourceQuery)
 
-	user, err := h.store.GetUser(id)
-	if err != nil {
-		ErrorHandler(c, err, http.StatusNotFound, "notFound")
-		return
+	// 构建获取请求
+	req := GetRequest{
+		ID:    id,
+		Query: q,
+		GetFunc: func(id string, preload bool) (interface{}, error) {
+			return h.store.GetUser(id)
+		},
+		ProcessFunc: func(resource interface{}, q *model.ResourceQuery, host, proto string) error {
+			user := resource.(*model.User)
+
+			// 设置Schema并加载组信息
+			h.enrichUser(user, q)
+
+			// 处理企业扩展属性
+			h.ProcessEnterpriseExtension(user)
+
+			// 从数据库填充 meta 数据
+			baseURL := proto + "://" + host
+			h.populateUserMeta(user, baseURL)
+
+			return nil
+		},
+		AttributeName: "groups",
+		Schema:        h.cfg.DefaultSchema,
 	}
 
-	// 设置Schema并加载组信息
-	h.enrichUser(user, q)
-
-	// 从数据库填充 meta 数据
-	host := c.Request.Host
-	proto := GetRequestProtocol(c)
-	baseURL := proto + "://" + host
-	h.populateUserMeta(user, baseURL)
-
-	// 应用属性选择（属性格式已在中间件验证）
-	if q.Attributes != "" || q.ExcludedAttributes != "" {
-		filtered, err := util.ApplyAttributeSelectionWithSpecialRules(user, q.Attributes, q.ExcludedAttributes, "groups")
-		if err != nil {
-			ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-			return
-		}
-		c.JSON(http.StatusOK, filtered)
-		return
-	}
-
-	c.JSON(http.StatusOK, user)
+	// 处理获取请求
+	HandleGet(c, req)
 }
 
 // CreateUser 创建用户
@@ -144,12 +147,6 @@ func (h *UserHandlers) CreateUser(c *gin.Context) {
 		return
 	}
 
-	// 验证必填字段
-	if err := h.validateUserRequiredFields(&u); err != nil {
-		ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
-		return
-	}
-
 	// 生成唯一ID
 	u.ID = uuid.NewString()
 	// 如果用户没有提供 schemas，使用默认 schema
@@ -157,23 +154,31 @@ func (h *UserHandlers) CreateUser(c *gin.Context) {
 		u.Schemas = []string{h.cfg.DefaultSchema}
 	}
 
-	// 保存用户
-	if err := h.store.CreateUser(&u); err != nil {
-		if errors.Is(err, model.ErrUniqueness) {
-			ErrorHandler(c, err, http.StatusConflict, "uniqueness")
-			return
-		}
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
+	// 处理企业扩展属性
+	h.ProcessEnterpriseExtension(&u)
+
+	// 构建创建请求
+	req := CreateRequest{
+		Resource: &u,
+		ValidateFunc: func(resource interface{}) error {
+			user := resource.(*model.User)
+			return h.validateUserRequiredFields(user)
+		},
+		CreateFunc: func(resource interface{}) error {
+			user := resource.(*model.User)
+			return h.store.CreateUser(user)
+		},
+		ProcessFunc: func(resource interface{}, host, proto string) error {
+			user := resource.(*model.User)
+			baseURL := proto + "://" + host
+			h.populateUserMeta(user, baseURL)
+			return nil
+		},
+		Schema: h.cfg.DefaultSchema,
 	}
 
-	// 从数据库填充 meta 数据
-	host := c.Request.Host
-	proto := GetRequestProtocol(c)
-	baseURL := proto + "://" + host
-	h.populateUserMeta(&u, baseURL)
-
-	c.JSON(http.StatusCreated, u)
+	// 处理创建请求
+	HandleCreate(c, req)
 }
 
 // UpdateUser 全量替换用户
@@ -199,9 +204,9 @@ func (h *UserHandlers) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	// 验证必填字段
-	if u.UserName == "" {
-		ErrorHandler(c, errors.New("userName is required"), http.StatusBadRequest, "invalidValue")
+	// 检查配置是否存在
+	if h.cfg == nil {
+		ErrorHandler(c, errors.New("configuration is nil"), http.StatusInternalServerError, "internalError")
 		return
 	}
 
@@ -212,46 +217,53 @@ func (h *UserHandlers) UpdateUser(c *gin.Context) {
 		u.Schemas = []string{h.cfg.DefaultSchema}
 	}
 
-	if err := h.store.UpdateUser(&u); err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			ErrorHandler(c, err, http.StatusNotFound, "notFound")
-			return
-		}
-		// 检查是否为重复性错误
-		if strings.Contains(err.Error(), "duplicate") {
-			ErrorHandler(c, err, http.StatusBadRequest, "uniqueness")
-			return
-		}
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
+	// 处理企业扩展属性
+	h.ProcessEnterpriseExtension(&u)
+
+	// 构建更新请求
+	req := UpdateRequest{
+		ID:       id,
+		Resource: &u,
+		ValidateFunc: func(resource interface{}) error {
+			user := resource.(*model.User)
+			return h.validateUserRequiredFields(user)
+		},
+		UpdateFunc: func(resource interface{}) error {
+			user := resource.(*model.User)
+			return h.store.UpdateUser(user)
+		},
+		GetFunc: func(id string) (interface{}, error) {
+			return h.store.GetUser(id)
+		},
+		ProcessFunc: func(resource interface{}, host, proto string) error {
+			user := resource.(*model.User)
+
+			// 处理企业扩展属性
+			h.ProcessEnterpriseExtension(user)
+
+			// 从数据库填充 meta 数据
+			baseURL := proto + "://" + host
+			h.populateUserMeta(user, baseURL)
+
+			return nil
+		},
+		Schema: h.cfg.DefaultSchema,
 	}
 
-	// 从数据库重新获取用户以获取最新的 meta 数据
-	updatedUser, err := h.store.GetUser(id)
-	if err != nil {
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
-	}
-
-	// 从数据库填充 meta 数据
-	host := c.Request.Host
-	proto := GetRequestProtocol(c)
-	baseURL := proto + "://" + host
-	h.populateUserMeta(updatedUser, baseURL)
-
-	c.JSON(http.StatusOK, updatedUser)
+	// 处理更新请求
+	HandleUpdate(c, req)
 }
 
 // PatchUser 补丁更新用户属性
 // @Summary 补丁更新用户
-// @Description 使用补丁操作更新用户属性
+// @Description 使用补丁操作更新用户属性。支持两种操作模式：1) 指定path参数更新特定属性；2) path为空时，value对象包含完整的资源属性修改
 // @Tags Users
 // @Accept json
 // @Produce json
 // @Param id path string true "用户ID"
-// @Param patch body model.PatchRequest true "补丁操作"
+// @Param patch body model.PatchRequest true "补丁操作。当path为空时，value必须是对象类型，包含需要修改的资源属性"
 // @Success 200 {object} model.User "更新成功"
-// @Failure 400 {object} model.ErrorResponse "请求参数错误"
+// @Failure 400 {object} model.ErrorResponse "请求参数错误 - 当path为空时，value必须是非空对象"
 // @Failure 401 {object} model.ErrorResponse "未授权"
 // @Failure 404 {object} model.ErrorResponse "用户不存在"
 // @Failure 500 {object} model.ErrorResponse "服务器内部错误"
@@ -271,39 +283,38 @@ func (h *UserHandlers) PatchUser(c *gin.Context) {
 		return
 	}
 
-	// 执行补丁更新
-	if err := h.store.PatchUser(id, req.Operations); err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			ErrorHandler(c, err, http.StatusNotFound, "notFound")
-			return
-		}
-		// 检查是否为重复性错误
-		if strings.Contains(err.Error(), "duplicate") {
-			ErrorHandler(c, err, http.StatusBadRequest, "uniqueness")
-			return
-		}
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
+	// 构建补丁请求
+	reqPatch := PatchRequest{
+		ID:  id,
+		Ops: req.Operations,
+		GetFunc: func(id string) (interface{}, error) {
+			return h.store.GetUser(id)
+		},
+		PatchFunc: func(id string, ops []model.PatchOperation) error {
+			return h.store.PatchUser(id, ops)
+		},
+		ProcessFunc: func(resource interface{}, host, proto string) error {
+			user := resource.(*model.User)
+
+			// 如果用户没有 schemas，设置默认 schema（支持自定义 schemas）
+			if len(user.Schemas) == 0 {
+				user.Schemas = []string{h.cfg.DefaultSchema}
+			}
+
+			// 处理企业扩展属性
+			h.ProcessEnterpriseExtension(user)
+
+			// 从数据库填充 meta 数据
+			baseURL := proto + "://" + host
+			h.populateUserMeta(user, baseURL)
+
+			return nil
+		},
+		Schema: h.cfg.DefaultSchema,
 	}
 
-	// 返回更新后的用户
-	user, err := h.store.GetUser(id)
-	if err != nil {
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
-	}
-	// 如果用户没有 schemas，设置默认 schema（支持自定义 schemas）
-	if len(user.Schemas) == 0 {
-		user.Schemas = []string{h.cfg.DefaultSchema}
-	}
-
-	// 从数据库填充 meta 数据
-	host := c.Request.Host
-	proto := GetRequestProtocol(c)
-	baseURL := proto + "://" + host
-	h.populateUserMeta(user, baseURL)
-
-	c.JSON(http.StatusOK, user)
+	// 处理补丁请求
+	HandlePatch(c, reqPatch)
 }
 
 // DeleteUser 删除用户
@@ -321,17 +332,17 @@ func (h *UserHandlers) PatchUser(c *gin.Context) {
 // @Security BearerAuth
 func (h *UserHandlers) DeleteUser(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.store.DeleteUser(id); err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			ErrorHandler(c, err, http.StatusNotFound, "notFound")
-			return
-		}
-		ErrorHandler(c, err, http.StatusInternalServerError, "internalError")
-		return
+
+	// 构建删除请求
+	req := DeleteRequest{
+		ID: id,
+		DeleteFunc: func(id string) error {
+			return h.store.DeleteUser(id)
+		},
 	}
 
-	// SCIM标准：删除成功返回204 No Content
-	c.Status(http.StatusNoContent)
+	// 处理删除请求
+	HandleDelete(c, req)
 }
 
 // ---------------------- User 辅助方法 ----------------------
@@ -363,7 +374,11 @@ func (h *UserHandlers) processUserList(users []model.User, q *model.ResourceQuer
 	baseURL := proto + "://" + host
 
 	for i := range users {
+		// 初始化 schemas
 		users[i].Schemas = []string{h.cfg.DefaultSchema}
+
+		// 处理企业扩展属性
+		h.ProcessEnterpriseExtension(&users[i])
 
 		// 从数据库填充 meta 数据
 		h.populateUserMeta(&users[i], baseURL)
@@ -403,6 +418,27 @@ func (h *UserHandlers) enrichUser(user *model.User, q *model.ResourceQuery) {
 		user.Schemas = []string{h.cfg.DefaultSchema}
 	}
 
+	// 处理企业扩展属性（只检查属性，不更新 schemas，因为 schemas 会在其他地方处理）
+	if user.EnterpriseUserExtension != nil {
+		// 检查 manager 是否为空，如果为空则设为 nil
+		if user.EnterpriseUserExtension.Manager != nil && (user.EnterpriseUserExtension.Manager.Value == "" && user.EnterpriseUserExtension.Manager.Ref == "") {
+			user.EnterpriseUserExtension.Manager = nil
+		}
+
+		// 检查是否有任何企业扩展属性
+		hasEnterpriseAttrs := user.EnterpriseUserExtension.EmployeeNumber != "" ||
+			user.EnterpriseUserExtension.CostCenter != "" ||
+			user.EnterpriseUserExtension.Organization != "" ||
+			user.EnterpriseUserExtension.Division != "" ||
+			user.EnterpriseUserExtension.Department != "" ||
+			user.EnterpriseUserExtension.Manager != nil
+
+		// 如果不包含企业扩展属性，将 EnterpriseUserExtension 设为 nil
+		if !hasEnterpriseAttrs {
+			user.EnterpriseUserExtension = nil
+		}
+	}
+
 	// 检查是否需要加载用户的组信息
 	if h.needsGroups(q) {
 		groups, _ := h.store.GetMemberGroups(user.ID)
@@ -411,14 +447,80 @@ func (h *UserHandlers) enrichUser(user *model.User, q *model.ResourceQuery) {
 }
 
 // validateUserRequiredFields 验证用户必填字段
+// 根据 SCIM 2.0 规范（RFC 7644），只有 userName 是必填字段
 func (h *UserHandlers) validateUserRequiredFields(u *model.User) error {
 	if u.UserName == "" {
 		return errors.New("userName is required")
 	}
-	if u.Name.GivenName == "" || u.Name.FamilyName == "" {
-		return errors.New("name.givenName and name.familyName are required")
+
+	// givenName 和 familyName 改为非必填项，符合 SCIM 2.0 规范
+	// name 属性整体是可选的，其中的子字段也是可选的
+
+	// 检查重复的 emails
+	if len(u.Emails) > 0 {
+		emailMap := make(map[string]bool)
+		for _, email := range u.Emails {
+			if email.Value == "" {
+				return errors.New("email value cannot be empty")
+			}
+			if emailMap[email.Value] {
+				return fmt.Errorf("duplicate email address: %s", email.Value)
+			}
+			emailMap[email.Value] = true
+		}
 	}
+
+	// 检查重复的 roles
+	if len(u.Roles) > 0 {
+		roleMap := make(map[string]bool)
+		for _, role := range u.Roles {
+			if role.Value == "" {
+				return errors.New("role value cannot be empty")
+			}
+			if roleMap[role.Value] {
+				return fmt.Errorf("duplicate role: %s", role.Value)
+			}
+			roleMap[role.Value] = true
+		}
+	}
+
 	return nil
+}
+
+// ProcessEnterpriseExtension 处理企业扩展属性
+// 检查企业扩展属性是否为空，更新 schemas 列表，并处理 manager 字段
+func (h *UserHandlers) ProcessEnterpriseExtension(user *model.User) bool {
+	enterpriseSchema := model.EnterpriseUserSchema.String()
+	hasEnterpriseAttrs := false
+
+	if user.EnterpriseUserExtension != nil {
+		// 检查 manager 是否为空，如果为空则设为 nil
+		if user.EnterpriseUserExtension.Manager != nil && (user.EnterpriseUserExtension.Manager.Value == "" && user.EnterpriseUserExtension.Manager.Ref == "") {
+			user.EnterpriseUserExtension.Manager = nil
+		}
+
+		// 检查是否有任何企业扩展属性
+		hasEnterpriseAttrs = user.EnterpriseUserExtension.EmployeeNumber != "" ||
+			user.EnterpriseUserExtension.CostCenter != "" ||
+			user.EnterpriseUserExtension.Organization != "" ||
+			user.EnterpriseUserExtension.Division != "" ||
+			user.EnterpriseUserExtension.Department != "" ||
+			user.EnterpriseUserExtension.Manager != nil
+	}
+
+	// 根据企业扩展属性的状态更新 schemas
+	if hasEnterpriseAttrs {
+		if !util.ContainsSchema(user.Schemas, enterpriseSchema) {
+			user.Schemas = append(user.Schemas, enterpriseSchema)
+		}
+	} else {
+		// 如果不包含企业扩展属性，将 EnterpriseUserExtension 设为 nil，避免返回空的 manager 对象
+		user.EnterpriseUserExtension = nil
+		// 从 schemas 中移除企业扩展 schema
+		user.Schemas = util.RemoveSchema(user.Schemas, enterpriseSchema)
+	}
+
+	return hasEnterpriseAttrs
 }
 
 // validatePatchRequest 验证Patch请求
