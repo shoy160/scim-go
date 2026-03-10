@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"scim-go/model"
 	"scim-go/util"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // DBStore 关系型数据库存储实现（MySQL/PG通用）
@@ -151,6 +151,7 @@ func (d *DBStore) ListUsers(q *model.ResourceQuery) ([]model.User, int64, error)
 		} else {
 			sort += " ASC"
 		}
+		log.Println("sort", sort)
 		query = query.Order(sort)
 	}
 
@@ -210,62 +211,11 @@ func (d *DBStore) UpdateUser(u *model.User) error {
 			return fmt.Errorf("failed to query current roles: %w", err)
 		}
 
-		// 构建当前 emails 和 roles 的映射，用于快速查找
-		currentEmailMap := make(map[string]model.Email)
-		for _, email := range currentEmails {
-			currentEmailMap[strings.ToLower(email.Value)] = email
+		if err := d.syncEmails(tx, u.ID, currentEmails, u.Emails); err != nil {
+			return fmt.Errorf("failed to save emails: %w", err)
 		}
-		currentRoleMap := make(map[string]model.Role)
-		for _, role := range currentRoles {
-			currentRoleMap[strings.ToLower(role.Value)] = role
-		}
-
-		// 构建目标 emails 和 roles 的映射
-		targetEmailMap := make(map[string]model.Email)
-		for _, email := range u.Emails {
-			targetEmailMap[strings.ToLower(email.Value)] = email
-		}
-		targetRoleMap := make(map[string]model.Role)
-		for _, role := range u.Roles {
-			targetRoleMap[strings.ToLower(role.Value)] = role
-		}
-
-		// 处理 emails 的全量覆盖
-		// 1. 删除不再存在的 emails
-		for emailValue, email := range currentEmailMap {
-			if _, exists := targetEmailMap[emailValue]; !exists {
-				if err := tx.Delete(&email).Error; err != nil {
-					return fmt.Errorf("failed to delete email: %w", err)
-				}
-			}
-		}
-		// 2. 添加新的 emails
-		for emailValue, email := range targetEmailMap {
-			if _, exists := currentEmailMap[emailValue]; !exists {
-				email.UserID = u.ID
-				if err := tx.Create(&email).Error; err != nil {
-					return fmt.Errorf("failed to create email: %w", err)
-				}
-			}
-		}
-
-		// 处理 roles 的全量覆盖
-		// 1. 删除不再存在的 roles
-		for roleValue, role := range currentRoleMap {
-			if _, exists := targetRoleMap[roleValue]; !exists {
-				if err := tx.Delete(&role).Error; err != nil {
-					return fmt.Errorf("failed to delete role: %w", err)
-				}
-			}
-		}
-		// 2. 添加新的 roles
-		for roleValue, role := range targetRoleMap {
-			if _, exists := currentRoleMap[roleValue]; !exists {
-				role.UserID = u.ID
-				if err := tx.Create(&role).Error; err != nil {
-					return fmt.Errorf("failed to create role: %w", err)
-				}
-			}
+		if err := d.syncRoles(tx, u.ID, currentRoles, u.Roles); err != nil {
+			return fmt.Errorf("failed to save roles: %w", err)
 		}
 
 		// 更新版本号（每次更新必须变化）
@@ -606,18 +556,42 @@ func validateRolesUniquenessByValues(roles []model.Role) ([]model.Role, error) {
 
 // DeleteUser 删除用户
 func (d *DBStore) DeleteUser(id string) error {
-	result := d.db.Delete(&model.User{}, "id = ?", id)
+	// 开始事务
+	tx := d.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// 删除用户在群组中的成员记录
+	if err := tx.Where("value = ?", id).Delete(&model.Member{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// 删除用户记录
+	result := tx.Delete(&model.User{}, "id = ?", id)
 	if result.Error != nil {
+		tx.Rollback()
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
+		tx.Rollback()
 		return model.ErrNotFound
 	}
+
+	// 提交事务
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+
 	// 清除相关缓存
 	if d.cache != nil {
 		ctx := context.Background()
 		d.cache.Delete(ctx, "users:list")
 		d.cache.Delete(ctx, "user:"+id)
+		d.cache.Delete(ctx, "groups:list")
 	}
 	return nil
 }
@@ -656,7 +630,30 @@ func (d *DBStore) CreateGroup(g *model.Group) error {
 	if len(g.Schemas) == 0 {
 		g.Schemas = []string{string(model.GroupSchema)}
 	}
-	return d.db.Create(g).Error
+	// 保存组基本信息（不包含成员）
+	members := g.Members
+	g.Members = nil
+	if err := d.db.Create(g).Error; err != nil {
+		return err
+	}
+	// 处理成员
+	if len(members) > 0 {
+		for i := range members {
+			members[i].GroupID = g.ID
+			if err := d.db.Create(&members[i]).Error; err != nil {
+				return err
+			}
+		}
+		g.Members = members
+	}
+	// 清除相关缓存
+	if d.cache != nil {
+		ctx := context.Background()
+		d.cache.Delete(ctx, "groups:list")
+		d.cache.Delete(ctx, fmt.Sprintf("group:%s:true", g.ID))
+		d.cache.Delete(ctx, fmt.Sprintf("group:%s:false", g.ID))
+	}
+	return nil
 }
 
 // GetGroup 获取组
@@ -808,11 +805,77 @@ func (d *DBStore) UpdateGroup(g *model.Group) error {
 	}
 	// UpdatedAt 由 GORM 的 autoUpdateTime 自动更新
 
+	// 保存成员列表到临时变量
+	members := g.Members
+	// 清空成员列表，避免 GORM 尝试更新关联记录导致 ON CONFLICT 错误
+	g.Members = nil
+
 	// 保存更新
-	if err := d.db.Session(&gorm.Session{FullSaveAssociations: true}).
-		Clauses(clause.OnConflict{UpdateAll: true}).
-		Save(g).Error; err != nil {
+	if err := d.db.Save(g).Error; err != nil {
 		return err
+	}
+
+	// 恢复成员列表
+	g.Members = members
+
+	// 处理成员更新
+	if len(g.Members) > 0 {
+		// 获取现有成员列表
+		var existingMembers []model.Member
+		if err := d.db.Where("group_id = ?", g.ID).Find(&existingMembers).Error; err != nil {
+			return err
+		}
+
+		// 创建现有成员的映射（value -> Member）
+		existingMap := make(map[string]model.Member)
+		for _, member := range existingMembers {
+			existingMap[member.Value] = member
+		}
+
+		// 创建新成员的映射（value -> Member）
+		newMap := make(map[string]model.Member)
+		for i := range g.Members {
+			g.Members[i].GroupID = g.ID
+			newMap[g.Members[i].Value] = g.Members[i]
+		}
+
+		// 开始事务
+		tx := d.db.Begin()
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+			}
+		}()
+
+		// 删除不再存在的成员
+		for value := range existingMap {
+			if _, exists := newMap[value]; !exists {
+				if err := tx.Where("group_id = ? AND value = ?", g.ID, value).Delete(&model.Member{}).Error; err != nil {
+					tx.Rollback()
+					return err
+				}
+			}
+		}
+
+		// 添加新成员
+		for value, member := range newMap {
+			if _, exists := existingMap[value]; !exists {
+				if err := tx.Create(&member).Error; err != nil {
+					tx.Rollback()
+					return err
+				}
+			}
+		}
+
+		// 提交事务
+		if err := tx.Commit().Error; err != nil {
+			return err
+		}
+	} else {
+		// 如果新成员列表为空，删除所有现有成员
+		if err := d.db.Where("group_id = ?", g.ID).Delete(&model.Member{}).Error; err != nil {
+			return err
+		}
 	}
 
 	// 清除相关缓存
@@ -902,7 +965,8 @@ func (d *DBStore) AddMemberToGroup(groupID, memberID string, memberType ...model
 		Type:    mt,
 	}
 
-	if mt == "User" {
+	switch mt {
+	case model.MemberTypeUser:
 		var user model.User
 		if err := d.db.First(&user, "id = ?", memberID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -915,7 +979,7 @@ func (d *DBStore) AddMemberToGroup(groupID, memberID string, memberType ...model
 		} else {
 			member.Display = user.UserName
 		}
-	} else if mt == "Group" {
+	case model.MemberTypeGroup:
 		var subGroup model.Group
 		if err := d.db.First(&subGroup, "id = ?", memberID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -924,7 +988,7 @@ func (d *DBStore) AddMemberToGroup(groupID, memberID string, memberType ...model
 			return err
 		}
 		member.Display = subGroup.DisplayName
-	} else {
+	default:
 		return model.ErrInvalidValue
 	}
 

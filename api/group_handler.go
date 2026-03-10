@@ -158,12 +158,12 @@ func (h *GroupHandlers) CreateGroup(c *gin.Context) {
 	// 构建创建请求
 	req := CreateRequest{
 		Resource: &g,
-		ValidateFunc: func(resource interface{}) error {
+		ValidateFunc: func(resource interface{}) (string, error) {
 			group := resource.(*model.Group)
 			if group.DisplayName == "" {
-				return errors.New("displayName is required")
+				return "displayName", errors.New("displayName is required")
 			}
-			return nil
+			return "", nil
 		},
 		CreateFunc: func(resource interface{}) error {
 			group := resource.(*model.Group)
@@ -216,19 +216,19 @@ func (h *GroupHandlers) UpdateGroup(c *gin.Context) {
 	req := UpdateRequest{
 		ID:       id,
 		Resource: &g,
-		ValidateFunc: func(resource interface{}) error {
+		ValidateFunc: func(resource interface{}) (string, error) {
 			group := resource.(*model.Group)
 			if group.DisplayName == "" {
-				return errors.New("displayName is required")
+				return "displayName", errors.New("displayName is required")
 			}
-			return nil
+			return "", nil
 		},
 		UpdateFunc: func(resource interface{}) error {
 			group := resource.(*model.Group)
 			return h.store.UpdateGroup(group)
 		},
 		GetFunc: func(id string) (interface{}, error) {
-			return h.store.GetGroup(id, false)
+			return h.store.GetGroup(id, g.Members != nil)
 		},
 		ProcessFunc: func(resource interface{}, host, proto string) error {
 			group := resource.(*model.Group)

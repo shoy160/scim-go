@@ -42,7 +42,7 @@ type GetRequest struct {
 // CreateRequest 创建资源请求参数
 type CreateRequest struct {
 	Resource     interface{}
-	ValidateFunc func(resource interface{}) error
+	ValidateFunc func(resource interface{}) (string, error)
 	CreateFunc   func(resource interface{}) error
 	ProcessFunc  func(resource interface{}, host, proto string) error
 	Schema       string
@@ -52,7 +52,7 @@ type CreateRequest struct {
 type UpdateRequest struct {
 	ID           string
 	Resource     interface{}
-	ValidateFunc func(resource interface{}) error
+	ValidateFunc func(resource interface{}) (string, error)
 	UpdateFunc   func(resource interface{}) error
 	GetFunc      func(id string) (interface{}, error)
 	ProcessFunc  func(resource interface{}, host, proto string) error
@@ -143,8 +143,13 @@ func HandleGet(c *gin.Context, req GetRequest) {
 func HandleCreate(c *gin.Context, req CreateRequest) {
 	// 验证资源
 	if req.ValidateFunc != nil {
-		if err := req.ValidateFunc(req.Resource); err != nil {
-			ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
+		if field, err := req.ValidateFunc(req.Resource); err != nil {
+			// 对于创建群组时displayName为空的情况，返回invalidSyntax错误
+			if field != "" {
+				ErrorHandlerWithField(c, err, http.StatusBadRequest, "invalidSyntax", field, req.Schema)
+			} else {
+				ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
+			}
 			return
 		}
 	}
@@ -178,8 +183,12 @@ func HandleCreate(c *gin.Context, req CreateRequest) {
 func HandleUpdate(c *gin.Context, req UpdateRequest) {
 	// 验证资源
 	if req.ValidateFunc != nil {
-		if err := req.ValidateFunc(req.Resource); err != nil {
-			ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
+		if field, err := req.ValidateFunc(req.Resource); err != nil {
+			if field != "" {
+				ErrorHandlerWithField(c, err, http.StatusBadRequest, "invalidSyntax", field, req.Schema)
+			} else {
+				ErrorHandler(c, err, http.StatusBadRequest, "invalidValue")
+			}
 			return
 		}
 	}

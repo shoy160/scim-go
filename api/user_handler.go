@@ -105,15 +105,15 @@ func (h *UserHandlers) GetUser(c *gin.Context) {
 		},
 		ProcessFunc: func(resource interface{}, q *model.ResourceQuery, host, proto string) error {
 			user := resource.(*model.User)
+			baseURL := proto + "://" + host
 
 			// 设置Schema并加载组信息
-			h.enrichUser(user, q)
+			h.enrichUser(user, q, baseURL)
 
 			// 处理企业扩展属性
 			h.ProcessEnterpriseExtension(user)
 
 			// 从数据库填充 meta 数据
-			baseURL := proto + "://" + host
 			h.populateUserMeta(user, baseURL)
 
 			return nil
@@ -160,7 +160,7 @@ func (h *UserHandlers) CreateUser(c *gin.Context) {
 	// 构建创建请求
 	req := CreateRequest{
 		Resource: &u,
-		ValidateFunc: func(resource interface{}) error {
+		ValidateFunc: func(resource interface{}) (string, error) {
 			user := resource.(*model.User)
 			return h.validateUserRequiredFields(user)
 		},
@@ -224,7 +224,7 @@ func (h *UserHandlers) UpdateUser(c *gin.Context) {
 	req := UpdateRequest{
 		ID:       id,
 		Resource: &u,
-		ValidateFunc: func(resource interface{}) error {
+		ValidateFunc: func(resource interface{}) (string, error) {
 			user := resource.(*model.User)
 			return h.validateUserRequiredFields(user)
 		},
@@ -389,6 +389,9 @@ func (h *UserHandlers) processUserList(users []model.User, q *model.ResourceQuer
 			if err != nil {
 				return nil
 			}
+			for idx := range groups {
+				groups[idx].Ref = util.ResolveRef(baseURL, h.cfg.APIPath, "Group", groups[idx].Value)
+			}
 			users[i].Groups = groups
 		}
 		// 应用属性选择（属性格式已在中间件验证）
@@ -412,7 +415,7 @@ func (h *UserHandlers) populateUserMeta(user *model.User, baseURL string) {
 }
 
 // enrichUser 丰富用户信息（设置Schema和加载组信息）
-func (h *UserHandlers) enrichUser(user *model.User, q *model.ResourceQuery) {
+func (h *UserHandlers) enrichUser(user *model.User, q *model.ResourceQuery, baseURL string) {
 	// 如果用户没有 schemas，设置默认 schema
 	if len(user.Schemas) == 0 {
 		user.Schemas = []string{h.cfg.DefaultSchema}
@@ -442,15 +445,19 @@ func (h *UserHandlers) enrichUser(user *model.User, q *model.ResourceQuery) {
 	// 检查是否需要加载用户的组信息
 	if h.needsGroups(q) {
 		groups, _ := h.store.GetMemberGroups(user.ID)
+		// 动态添加 $ref 字段
+		for i := range groups {
+			groups[i].Ref = util.ResolveRef(baseURL, h.cfg.APIPath, "Group", groups[i].Value)
+		}
 		user.Groups = groups
 	}
 }
 
 // validateUserRequiredFields 验证用户必填字段
 // 根据 SCIM 2.0 规范（RFC 7644），只有 userName 是必填字段
-func (h *UserHandlers) validateUserRequiredFields(u *model.User) error {
+func (h *UserHandlers) validateUserRequiredFields(u *model.User) (string, error) {
 	if u.UserName == "" {
-		return errors.New("userName is required")
+		return "userName", errors.New("userName is required")
 	}
 
 	// givenName 和 familyName 改为非必填项，符合 SCIM 2.0 规范
@@ -461,10 +468,10 @@ func (h *UserHandlers) validateUserRequiredFields(u *model.User) error {
 		emailMap := make(map[string]bool)
 		for _, email := range u.Emails {
 			if email.Value == "" {
-				return errors.New("email value cannot be empty")
+				return "emails", errors.New("email value cannot be empty")
 			}
 			if emailMap[email.Value] {
-				return fmt.Errorf("duplicate email address: %s", email.Value)
+				return "emails", fmt.Errorf("duplicate email address: %s", email.Value)
 			}
 			emailMap[email.Value] = true
 		}
@@ -475,16 +482,16 @@ func (h *UserHandlers) validateUserRequiredFields(u *model.User) error {
 		roleMap := make(map[string]bool)
 		for _, role := range u.Roles {
 			if role.Value == "" {
-				return errors.New("role value cannot be empty")
+				return "roles", errors.New("role value cannot be empty")
 			}
 			if roleMap[role.Value] {
-				return fmt.Errorf("duplicate role: %s", role.Value)
+				return "roles", fmt.Errorf("duplicate role: %s", role.Value)
 			}
 			roleMap[role.Value] = true
 		}
 	}
 
-	return nil
+	return "", nil
 }
 
 // ProcessEnterpriseExtension 处理企业扩展属性

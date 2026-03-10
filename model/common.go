@@ -133,6 +133,8 @@ type ErrorResponse struct {
 	Status int `json:"status"`
 	// ScimType SCIM错误类型
 	ScimType string `json:"scimType,omitempty"`
+	// 异常详情
+	Errors map[string][]string `json:"errors,omitempty"`
 }
 
 // NewErrorResponse 创建新的错误响应

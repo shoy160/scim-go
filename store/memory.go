@@ -833,13 +833,13 @@ func (m *MemoryStore) sortUsers(users []model.User, sortBy, sortOrder string) {
 		var cmp int
 		switch sortBy {
 		case "userName":
-			cmp = strings.Compare(users[i].UserName, users[j].UserName)
+			cmp = strings.Compare(strings.ToLower(users[i].UserName), strings.ToLower(users[j].UserName))
 		case "displayName":
 			cmp = strings.Compare(users[i].DisplayName, users[j].DisplayName)
 		case "id":
 			cmp = strings.Compare(users[i].ID, users[j].ID)
 		default:
-			cmp = strings.Compare(users[i].UserName, users[j].UserName)
+			cmp = strings.Compare(strings.ToLower(users[i].UserName), strings.ToLower(users[j].UserName))
 		}
 
 		if sortOrder == "descending" {

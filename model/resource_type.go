@@ -308,6 +308,39 @@ func GetUserSchema() *Schema {
 				Returned:    "default",
 				Uniqueness:  "none",
 			},
+			{
+				Name:        "groups",
+				Type:        "complex",
+				MultiValued: true,
+				Description: "A list of groups that the user belongs to.",
+				Required:    false,
+				SubAttributes: []SchemaAttribute{
+					{
+						Name:        "value",
+						Type:        "string",
+						MultiValued: false,
+						Description: "Identifier of the group to which the user belongs.",
+						Required:    false,
+					},
+					{
+						Name:           "$ref",
+						Type:           "reference",
+						MultiValued:    false,
+						Description:    "The URI corresponding to a SCIM resource that is a group to which the user belongs.",
+						Required:       false,
+						ReferenceTypes: []string{"Group"},
+					},
+					{
+						Name:        "display",
+						Type:        "string",
+						MultiValued: false,
+						Description: "A human-readable name, primarily used for display purposes.",
+						Required:    false,
+					},
+				},
+				Mutability: "readOnly",
+				Returned:   "default",
+			},
 		},
 	}
 }

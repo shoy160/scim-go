@@ -156,6 +156,10 @@ func (s *AuthingStore) GetUser(id string) (*model.User, error) {
 	// 获取用户所属组
 	groups, err := s.GetMemberGroups(user.ID)
 	if err == nil {
+		// 动态添加 $ref 字段
+		for i := range groups {
+			groups[i].Ref = "/groups/" + groups[i].Value
+		}
 		user.Groups = groups
 	}
 

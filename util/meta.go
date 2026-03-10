@@ -33,9 +33,13 @@ func PopulateMeta(resourceType string, id string, createdAt, updatedAt time.Time
 	}
 
 	// 动态生成 location
-	meta.Location = baseURL + apiPath + "/" + resourceType + "s/" + id
+	meta.Location = ResolveRef(baseURL, apiPath, resourceType, id)
 
 	return meta
+}
+
+func ResolveRef(baseURL string, apiPath string, resourceType string, value string) string {
+	return baseURL + apiPath + "/" + resourceType + "s/" + value
 }
 
 // GenerateUserMeta 生成用户meta数据

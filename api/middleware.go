@@ -272,6 +272,18 @@ func formatDuration(d time.Duration) string {
 // ErrorHandler 通用错误处理函数
 // 统一错误响应格式，简化代码
 func ErrorHandler(c *gin.Context, err error, status int, scimType string) {
+	ErrorHandlerWithDetails(c, err, status, scimType, nil)
+}
+
+// ErrorHandler 通用错误处理函数
+// 统一错误响应格式，简化代码
+func ErrorHandlerWithField(c *gin.Context, err error, status int, scimType string, field string, schema string) {
+	ErrorHandlerWithDetails(c, err, status, scimType, map[string][]string{schema + ":" + field: {err.Error()}})
+}
+
+// ErrorHandler 通用错误处理函数
+// 统一错误响应格式，简化代码
+func ErrorHandlerWithDetails(c *gin.Context, err error, status int, scimType string, errors map[string][]string) {
 	// 记录错误日志
 	clientIP := c.ClientIP()
 	method := c.Request.Method
@@ -295,6 +307,7 @@ func ErrorHandler(c *gin.Context, err error, status int, scimType string) {
 		Detail:   err.Error(),
 		Status:   status,
 		ScimType: scimType,
+		Errors:   errors,
 	})
 }
 

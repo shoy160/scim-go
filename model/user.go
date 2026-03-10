@@ -38,7 +38,7 @@ func (s *StringList) Scan(value interface{}) error {
 // Manager SCIM 2.0 企业用户扩展中的manager字段
 type Manager struct {
 	Value string `json:"value,omitempty" gorm:"type:varchar(64);column:manager_value"`
-	Ref   string `json:"$ref,omitempty" gorm:"type:varchar(255);column:manager_ref;"`
+	Ref   string `json:"$ref,omitempty" gorm:"-"` // 成员引用URI（动态生成）
 }
 
 // EnterpriseUserExtension SCIM 2.0 企业用户扩展模型（RFC 7643）
@@ -92,6 +92,7 @@ type User struct {
 // UserGroup 用户所属的组信息
 type UserGroup struct {
 	Value   string `json:"value"`   // 组ID
+	Ref     string `json:"$ref"`    // 组引用URI
 	Display string `json:"display"` // 组显示名称
 }
 
