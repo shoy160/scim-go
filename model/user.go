@@ -83,6 +83,10 @@ type User struct {
 
 	// 邮箱（多值属性，关联表）
 	Emails []Email `json:"emails,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	// 电话号码（多值属性，关联表）
+	PhoneNumbers []PhoneNumber `json:"phoneNumbers,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	// 地址（多值属性，关联表）
+	Addresses []Address `json:"addresses,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
 	// 角色（SCIM标准）
 	Roles []Role `json:"roles,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
 	// 用户所属的组（非数据库字段，动态填充）
@@ -107,6 +111,34 @@ type Email struct {
 	Primary   bool      `json:"primary" gorm:"default:true"`
 }
 
+// PhoneNumber 用户电话号码（多值属性）
+type PhoneNumber struct {
+	ID        uint      `json:"-" gorm:"primaryKey"`
+	CreatedAt time.Time `json:"-"`
+	UpdatedAt time.Time `json:"-"`
+	UserID    string    `json:"-" gorm:"column:user_id;type:varchar(64);index"`
+	Value     string    `json:"value" gorm:"type:varchar(32);not null"`
+	Type      string    `json:"type" gorm:"type:varchar(32);default:'work'"` // work/home/mobile/other
+	Primary   bool      `json:"primary" gorm:"default:true"`
+}
+
+// Address 用户地址（多值属性）
+type Address struct {
+	ID            uint      `json:"-" gorm:"primaryKey"`
+	CreatedAt     time.Time `json:"-"`
+	UpdatedAt     time.Time `json:"-"`
+	UserID        string    `json:"-" gorm:"column:user_id;type:varchar(64);index"`
+	Value         string    `json:"value,omitempty" gorm:"type:varchar(255)"`
+	Display       string    `json:"display,omitempty" gorm:"type:varchar(128)"`
+	StreetAddress string    `json:"streetAddress,omitempty" gorm:"type:varchar(128);column:street_address"`
+	Locality      string    `json:"locality,omitempty" gorm:"type:varchar(64)"`
+	Region        string    `json:"region,omitempty" gorm:"type:varchar(64)"`
+	PostalCode    string    `json:"postalCode,omitempty" gorm:"type:varchar(32);column:postal_code"`
+	Country       string    `json:"country,omitempty" gorm:"type:varchar(64)"`
+	Type          string    `json:"type" gorm:"type:varchar(32);default:'work'"` // work/home/other
+	Primary       bool      `json:"primary" gorm:"default:true"`
+}
+
 // Role 用户角色（SCIM标准）
 type Role struct {
 	ID        uint      `json:"-" gorm:"primaryKey"`
@@ -120,6 +152,8 @@ type Role struct {
 }
 
 // TableName 表名映射
-func (u *User) TableName() string  { return "scim_users" }
-func (e *Email) TableName() string { return "scim_user_emails" }
-func (r *Role) TableName() string  { return "scim_user_roles" }
+func (u *User) TableName() string        { return "scim_users" }
+func (e *Email) TableName() string       { return "scim_user_emails" }
+func (p *PhoneNumber) TableName() string { return "scim_user_phone_numbers" }
+func (a *Address) TableName() string     { return "scim_user_addresses" }
+func (r *Role) TableName() string        { return "scim_user_roles" }

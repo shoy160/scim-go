@@ -23,7 +23,7 @@ type DBStore struct {
 func NewDB(db *gorm.DB, cache util.Cache) Store {
 	// 自动迁移表结构（含关联表）
 	err := db.AutoMigrate(
-		&model.User{}, &model.Email{}, &model.Role{},
+		&model.User{}, &model.Email{}, &model.PhoneNumber{}, &model.Address{}, &model.Role{},
 		&model.Group{}, &model.Member{},
 		&model.CustomResourceType{}, &model.CustomResource{},
 	)
@@ -58,8 +58,10 @@ func (d *DBStore) CreateUser(u *model.User) error {
 	if len(u.Schemas) == 0 {
 		u.Schemas = []string{string(model.UserSchema)}
 	}
-	// 去重处理：检查 emails 和 roles 是否有重复
+	// 去重处理：检查 emails、phoneNumbers、addresses 和 roles 是否有重复
 	u.Emails = deduplicateEmails(u.Emails)
+	u.PhoneNumbers = deduplicatePhoneNumbers(u.PhoneNumbers)
+	u.Addresses = deduplicateAddresses(u.Addresses)
 	u.Roles = deduplicateRoles(u.Roles)
 	// 创建用户
 	if err := d.db.Create(u).Error; err != nil {
@@ -87,7 +89,7 @@ func (d *DBStore) GetUser(id string) (*model.User, error) {
 	}
 	// 从数据库获取
 	var u model.User
-	err := d.db.Preload("Emails").Preload("Roles").First(&u, "id = ?", id).Error
+	err := d.db.Preload("Emails").Preload("PhoneNumbers").Preload("Addresses").Preload("Roles").First(&u, "id = ?", id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, model.ErrNotFound
 	}
@@ -122,7 +124,7 @@ func (d *DBStore) ListUsers(q *model.ResourceQuery) ([]model.User, int64, error)
 	}
 
 	// 基础查询（预加载关联）
-	query := d.db.Preload("Emails").Preload("Roles").Model(&model.User{})
+	query := d.db.Preload("Emails").Preload("PhoneNumbers").Preload("Addresses").Preload("Roles").Model(&model.User{})
 
 	// 应用过滤器
 	if q.Filter != "" {
@@ -197,15 +199,25 @@ func (d *DBStore) UpdateUser(u *model.User) error {
 			return model.ErrUniqueness
 		}
 
-		// 去重处理：检查 emails 和 roles 是否有重复
+		// 去重处理：检查 emails、phoneNumbers、addresses 和 roles 是否有重复
 		u.Emails = deduplicateEmails(u.Emails)
+		u.PhoneNumbers = deduplicatePhoneNumbers(u.PhoneNumbers)
+		u.Addresses = deduplicateAddresses(u.Addresses)
 		u.Roles = deduplicateRoles(u.Roles)
 
-		// 获取当前用户的 emails 和 roles
+		// 获取当前用户的 emails、phoneNumbers、addresses 和 roles
 		var currentEmails []model.Email
+		var currentPhoneNumbers []model.PhoneNumber
+		var currentAddresses []model.Address
 		var currentRoles []model.Role
 		if err := tx.Where("user_id = ?", u.ID).Find(&currentEmails).Error; err != nil {
 			return fmt.Errorf("failed to query current emails: %w", err)
+		}
+		if err := tx.Where("user_id = ?", u.ID).Find(&currentPhoneNumbers).Error; err != nil {
+			return fmt.Errorf("failed to query current phone numbers: %w", err)
+		}
+		if err := tx.Where("user_id = ?", u.ID).Find(&currentAddresses).Error; err != nil {
+			return fmt.Errorf("failed to query current addresses: %w", err)
 		}
 		if err := tx.Where("user_id = ?", u.ID).Find(&currentRoles).Error; err != nil {
 			return fmt.Errorf("failed to query current roles: %w", err)
@@ -213,6 +225,12 @@ func (d *DBStore) UpdateUser(u *model.User) error {
 
 		if err := d.syncEmails(tx, u.ID, currentEmails, u.Emails); err != nil {
 			return fmt.Errorf("failed to save emails: %w", err)
+		}
+		if err := d.syncPhoneNumbers(tx, u.ID, currentPhoneNumbers, u.PhoneNumbers); err != nil {
+			return fmt.Errorf("failed to save phone numbers: %w", err)
+		}
+		if err := d.syncAddresses(tx, u.ID, currentAddresses, u.Addresses); err != nil {
+			return fmt.Errorf("failed to save addresses: %w", err)
 		}
 		if err := d.syncRoles(tx, u.ID, currentRoles, u.Roles); err != nil {
 			return fmt.Errorf("failed to save roles: %w", err)
@@ -391,6 +409,41 @@ func deduplicateRoles(roles []model.Role) []model.Role {
 	return result
 }
 
+// deduplicatePhoneNumbers 对电话号码列表进行去重，保留第一个出现的记录
+func deduplicatePhoneNumbers(phoneNumbers []model.PhoneNumber) []model.PhoneNumber {
+	if len(phoneNumbers) <= 1 {
+		return phoneNumbers
+	}
+	seen := make(map[string]bool)
+	result := make([]model.PhoneNumber, 0, len(phoneNumbers))
+	for _, phone := range phoneNumbers {
+		key := strings.ToLower(phone.Value)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, phone)
+		}
+	}
+	return result
+}
+
+// deduplicateAddresses 对地址列表进行去重，保留第一个出现的记录
+func deduplicateAddresses(addresses []model.Address) []model.Address {
+	if len(addresses) <= 1 {
+		return addresses
+	}
+	// 对于地址，使用streetAddress、locality、region、postalCode和country的组合作为唯一键
+	seen := make(map[string]bool)
+	result := make([]model.Address, 0, len(addresses))
+	for _, address := range addresses {
+		key := strings.ToLower(address.StreetAddress + "," + address.Locality + "," + address.Region + "," + address.PostalCode + "," + address.Country)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, address)
+		}
+	}
+	return result
+}
+
 func (d *DBStore) PatchUser(id string, ops []model.PatchOperation) error {
 	// 在事务内执行 Patch 操作
 	return d.db.Transaction(func(tx *gorm.DB) error {
@@ -403,14 +456,18 @@ func (d *DBStore) PatchUser(id string, ops []model.PatchOperation) error {
 			return err
 		}
 
-		// 预加载现有的 emails 和 roles
-		if err := tx.Preload("Emails").Preload("Roles").First(&u, "id = ?", id).Error; err != nil {
+		// 预加载现有的 emails、phoneNumbers、addresses 和 roles
+		if err := tx.Preload("Emails").Preload("PhoneNumbers").Preload("Addresses").Preload("Roles").First(&u, "id = ?", id).Error; err != nil {
 			return err
 		}
 
-		// 保存原始的 emails 和 roles 用于后续对比
+		// 保存原始的 emails、phoneNumbers、addresses 和 roles 用于后续对比
 		originalEmails := make([]model.Email, len(u.Emails))
 		copy(originalEmails, u.Emails)
+		originalPhoneNumbers := make([]model.PhoneNumber, len(u.PhoneNumbers))
+		copy(originalPhoneNumbers, u.PhoneNumbers)
+		originalAddresses := make([]model.Address, len(u.Addresses))
+		copy(originalAddresses, u.Addresses)
 		originalRoles := make([]model.Role, len(u.Roles))
 		copy(originalRoles, u.Roles)
 
@@ -422,6 +479,16 @@ func (d *DBStore) PatchUser(id string, ops []model.PatchOperation) error {
 
 		// 处理 emails 的差异更新
 		if err := d.syncEmails(tx, id, originalEmails, u.Emails); err != nil {
+			return err
+		}
+
+		// 处理 phoneNumbers 的差异更新
+		if err := d.syncPhoneNumbers(tx, id, originalPhoneNumbers, u.PhoneNumbers); err != nil {
+			return err
+		}
+
+		// 处理 addresses 的差异更新
+		if err := d.syncAddresses(tx, id, originalAddresses, u.Addresses); err != nil {
 			return err
 		}
 
@@ -510,6 +577,85 @@ func (d *DBStore) syncRoles(tx *gorm.DB, userID string, originalRoles, newRoles 
 			// 新增该 role
 			newRole.UserID = userID
 			if err := tx.Create(&newRole).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// syncPhoneNumbers 同步 phoneNumbers，仅对差异部分执行删除或新增操作
+func (d *DBStore) syncPhoneNumbers(tx *gorm.DB, userID string, originalPhoneNumbers, newPhoneNumbers []model.PhoneNumber) error {
+	// 构建原始 phoneNumber 的 map，用于快速查找
+	originalMap := make(map[string]model.PhoneNumber)
+	for _, phone := range originalPhoneNumbers {
+		originalMap[strings.ToLower(phone.Value)] = phone
+	}
+
+	// 构建新 phoneNumber 的 map
+	newMap := make(map[string]model.PhoneNumber)
+	for _, phone := range newPhoneNumbers {
+		newMap[strings.ToLower(phone.Value)] = phone
+	}
+
+	// 找出需要删除的 phoneNumbers（在原始中存在但在新中不存在）
+	for key, originalPhone := range originalMap {
+		if _, exists := newMap[key]; !exists {
+			// 删除该 phoneNumber
+			if err := tx.Where("user_id = ? AND LOWER(value) = LOWER(?)", userID, originalPhone.Value).Delete(&model.PhoneNumber{}).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	// 找出需要新增的 phoneNumbers（在新中存在但在原始中不存在）
+	for key, newPhone := range newMap {
+		if _, exists := originalMap[key]; !exists {
+			// 新增该 phoneNumber
+			newPhone.UserID = userID
+			if err := tx.Create(&newPhone).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// syncAddresses 同步 addresses，仅对差异部分执行删除或新增操作
+func (d *DBStore) syncAddresses(tx *gorm.DB, userID string, originalAddresses, newAddresses []model.Address) error {
+	// 构建原始 address 的 map，用于快速查找
+	originalMap := make(map[string]model.Address)
+	for _, address := range originalAddresses {
+		key := strings.ToLower(address.StreetAddress + "," + address.Locality + "," + address.Region + "," + address.PostalCode + "," + address.Country)
+		originalMap[key] = address
+	}
+
+	// 构建新 address 的 map
+	newMap := make(map[string]model.Address)
+	for _, address := range newAddresses {
+		key := strings.ToLower(address.StreetAddress + "," + address.Locality + "," + address.Region + "," + address.PostalCode + "," + address.Country)
+		newMap[key] = address
+	}
+
+	// 找出需要删除的 addresses（在原始中存在但在新中不存在）
+	for key, originalAddress := range originalMap {
+		if _, exists := newMap[key]; !exists {
+			// 删除该 address
+			if err := tx.Where("user_id = ? AND street_address = ? AND locality = ? AND region = ? AND postal_code = ? AND country = ?",
+				userID, originalAddress.StreetAddress, originalAddress.Locality, originalAddress.Region, originalAddress.PostalCode, originalAddress.Country).Delete(&model.Address{}).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	// 找出需要新增的 addresses（在新中存在但在原始中不存在）
+	for key, newAddress := range newMap {
+		if _, exists := originalMap[key]; !exists {
+			// 新增该 address
+			newAddress.UserID = userID
+			if err := tx.Create(&newAddress).Error; err != nil {
 				return err
 			}
 		}
