@@ -14,8 +14,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 
 # 阶段2：生产镜像（使用 Alpine 更轻量且包含必要工具）
 FROM alpine:3.19 AS production
-# 安装必要的工具
-RUN apk --no-cache add bash curl wget && rm -rf /var/cache/apk/*
+# 安装必要的工具和时区数据
+RUN apk --no-cache add bash curl wget tzdata && rm -rf /var/cache/apk/*
+
+# 设置时区为北京时间(UTC+8)
+ENV TZ=Asia/Shanghai
+RUN ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
     # 设置工作目录
 WORKDIR /app

@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // 预定义错误
@@ -107,7 +108,7 @@ func (p *PatchRequest) Validate() error {
 // PatchOperation PATCH操作项：add/remove/replace
 type PatchOperation struct {
 	// Op 操作类型，必须是 add/remove/replace 之一
-	Op string `json:"op" validate:"required,oneof=add remove replace"`
+	Op string `json:"op" validate:"required"`
 	// Path 属性路径，如 name.givenName 或 emails[0].value
 	Path string `json:"path,omitempty"`
 	// Value 操作值
@@ -116,10 +117,14 @@ type PatchOperation struct {
 
 // Validate 验证Patch操作的有效性
 func (p *PatchOperation) Validate() error {
+	// 转换为小写进行验证
+	lowerOp := strings.ToLower(p.Op)
 	validOps := map[string]bool{"add": true, "remove": true, "replace": true}
-	if !validOps[p.Op] {
+	if !validOps[lowerOp] {
 		return fmt.Errorf("invalid operation: %s", p.Op)
 	}
+	// 统一转换为小写
+	p.Op = lowerOp
 	return nil
 }
 
