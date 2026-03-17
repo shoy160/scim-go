@@ -3,6 +3,7 @@ package util
 import (
 	"errors"
 	"scim-go/model"
+	"strings"
 )
 
 // ValidatePatchRequest 验证Patch请求
@@ -15,9 +16,11 @@ func ValidatePatchRequest(req *model.PatchRequest) error {
 	// 验证操作类型
 	validOps := map[string]bool{"add": true, "remove": true, "replace": true}
 	for _, op := range req.Operations {
-		if !validOps[op.Op] {
+		lowerOp := strings.ToLower(op.Op)
+		if !validOps[lowerOp] {
 			return errors.New("invalid operation: " + op.Op)
 		}
+		op.Op = lowerOp
 
 		// 当 path 为空时，验证 value 是否存在且为对象类型
 		if op.Path == "" {

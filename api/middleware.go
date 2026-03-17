@@ -1,7 +1,11 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"scim-go/model"
 	"scim-go/util"
@@ -10,6 +14,25 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// BodyPreserver 保存请求体的中间件
+// 确保请求体在后续处理中可重复读取
+func BodyPreserver() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 仅处理POST、PUT、PATCH请求
+		if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "PATCH" {
+			// 读取请求体
+			bodyBytes, err := io.ReadAll(c.Request.Body)
+			if err == nil && len(bodyBytes) > 0 {
+				// 保存到上下文
+				c.Set("requestBody", bodyBytes)
+				// 重置请求体
+				c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			}
+		}
+		c.Next()
+	}
+}
 
 // Auth SCIM Bearer Token认证中间件
 // 支持缓存验证结果以提升性能
@@ -290,16 +313,24 @@ func ErrorHandlerWithDetails(c *gin.Context, err error, status int, scimType str
 	path := c.Request.URL.Path
 
 	// 获取请求参数
-	var params interface{}
-	if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "PATCH" {
-		var reqBody interface{}
-		if err := c.ShouldBindJSON(&reqBody); err == nil {
-			params = reqBody
+	var reqBody any
+	// 首先尝试从上下文获取保存的请求体
+	if bodyBytes, exists := c.Get("requestBody"); exists {
+		if bytes, ok := bodyBytes.([]byte); ok && len(bytes) > 0 {
+			// 尝试解析为JSON
+			if jsonErr := json.Unmarshal(bytes, &reqBody); jsonErr != nil {
+				log.Printf("Failed to parse request body as JSON: %v", jsonErr)
+				reqBody = string(bytes)
+			}
+		}
+	} else if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "PATCH" {
+		if error := c.ShouldBindJSON(&reqBody); error != nil {
+			log.Printf("Failed to bind request body: %v", error)
 		}
 	}
 
 	// 记录API错误
-	util.LogAPIError("API Error", err, path, method, params, clientIP, status, "")
+	util.LogAPIError("API Error", err, path, method, reqBody, clientIP, status, "")
 
 	// 返回错误响应
 	c.JSON(status, model.ErrorResponse{

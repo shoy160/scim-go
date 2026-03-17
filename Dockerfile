@@ -35,8 +35,8 @@ COPY --from=builder /app/config.yaml /app/config.yaml
 EXPOSE 8080
 # 使用非 root 用户运行
 USER nonroot:nonroot
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["wget", "--spider", "-q", "http://localhost:8080/health"] || exit 1
+# # 健康检查
+# HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+#     CMD ["wget", "--spider", "-q", "http://localhost:8080/health"] || exit 1
 # 启动命令
 ENTRYPOINT ["/app/scim-server"]

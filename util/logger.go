@@ -59,7 +59,7 @@ func NewLogger() *Logger {
 }
 
 // log 记录日志的内部方法
-func (l *Logger) log(level LogLevel, errorLevel ErrorLevel, message string, err error, stack string, path string, method string, params interface{}, clientIP string, statusCode int, responseTime string) {
+func (l *Logger) log(level LogLevel, errorLevel ErrorLevel, message string, err error, stack string, path string, method string, reqBody any, clientIP string, statusCode int, responseTime string) {
 	// 获取模块名称和业务标识
 	module, businessID := getModuleAndBusinessID()
 
@@ -67,7 +67,7 @@ func (l *Logger) log(level LogLevel, errorLevel ErrorLevel, message string, err 
 	filteredStack := filterStack(stack)
 
 	// 控制台友好格式输出
-	consoleFormat := formatConsoleLog(level, message, err, module, businessID, path, method, statusCode, responseTime, clientIP, filteredStack)
+	consoleFormat := formatConsoleLog(level, message, err, module, businessID, path, method, statusCode, responseTime, clientIP, reqBody, filteredStack)
 	fmt.Println(consoleFormat)
 
 	// // 同时输出JSON格式（可选，用于日志分析工具）
@@ -122,7 +122,7 @@ func (l *Logger) Fatal(message string, err error, params ...interface{}) {
 }
 
 // LogAPIError 记录API错误
-func (l *Logger) LogAPIError(message string, err error, path string, method string, params interface{}, clientIP string, statusCode int, responseTime string) {
+func (l *Logger) LogAPIError(message string, err error, path string, method string, reqBody any, clientIP string, statusCode int, responseTime string) {
 	errorLevel := ErrorLevelNonFatal
 	if statusCode >= 500 {
 		errorLevel = ErrorLevelFatal
@@ -133,12 +133,9 @@ func (l *Logger) LogAPIError(message string, err error, path string, method stri
 	if statusCode >= 500 {
 		// 5xx错误记录完整堆栈
 		stack = getStack()
-	} else if err != nil {
-		// 4xx错误只记录错误信息，不记录堆栈
-		stack = ""
 	}
 
-	l.log(LogLevelError, errorLevel, message, err, stack, path, method, params, clientIP, statusCode, responseTime)
+	l.log(LogLevelError, errorLevel, message, err, stack, path, method, reqBody, clientIP, statusCode, responseTime)
 }
 
 // getErrorString 获取错误字符串
@@ -244,7 +241,7 @@ func filterStack(stack string) string {
 }
 
 // formatConsoleLog 格式化控制台日志输出
-func formatConsoleLog(level LogLevel, message string, err error, module string, businessID string, path string, method string, statusCode int, responseTime string, clientIP string, stack string) string {
+func formatConsoleLog(level LogLevel, message string, err error, module string, businessID string, path string, method string, statusCode int, responseTime string, clientIP string, reqBody any, stack string) string {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 
 	// 颜色代码
@@ -300,6 +297,11 @@ func formatConsoleLog(level LogLevel, message string, err error, module string, 
 	if clientIP != "" {
 		logFormat += fmt.Sprintf(" | IP: %s", clientIP)
 	}
+	if reqBody != nil {
+		if bodyBytes, err := json.Marshal(reqBody); err == nil {
+			logFormat += fmt.Sprintf(" | body: %v", string(bodyBytes))
+		}
+	}
 
 	// 添加堆栈信息（只在有堆栈且级别为错误或以上时）
 	if stack != "" && (level == LogLevelError || level == LogLevelFatal) {
@@ -338,6 +340,6 @@ func Fatal(message string, err error, params ...interface{}) {
 }
 
 // LogAPIError 全局API错误日志
-func LogAPIError(message string, err error, path string, method string, params interface{}, clientIP string, statusCode int, responseTime string) {
-	globalLogger.LogAPIError(message, err, path, method, params, clientIP, statusCode, responseTime)
+func LogAPIError(message string, err error, path string, method string, reqBody any, clientIP string, statusCode int, responseTime string) {
+	globalLogger.LogAPIError(message, err, path, method, reqBody, clientIP, statusCode, responseTime)
 }

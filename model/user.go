@@ -135,6 +135,7 @@ type Address struct {
 	Region        string    `json:"region,omitempty" gorm:"type:varchar(64)"`
 	PostalCode    string    `json:"postalCode,omitempty" gorm:"type:varchar(32);column:postal_code"`
 	Country       string    `json:"country,omitempty" gorm:"type:varchar(64)"`
+	Formatted     string    `json:"formatted,omitempty" gorm:"type:varchar(255)"`
 	Type          string    `json:"type" gorm:"type:varchar(32);default:'work'"` // work/home/other
 	Primary       bool      `json:"primary" gorm:"default:true"`
 }

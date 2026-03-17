@@ -78,6 +78,9 @@ func (reg *RouteRegistrar) registerGlobalMiddlewares() {
 	corsConfig.AllowCredentials = true
 	reg.r.Use(cors.New(corsConfig))
 
+	// 注册请求体保存中间件
+	reg.r.Use(BodyPreserver())
+
 	// 注册性能监控中间件
 	reg.r.Use(PerformanceMonitor())
 

@@ -11,48 +11,38 @@ import (
 
 // FilterNode 过滤器抽象语法树节点
 type FilterNode struct {
-	Op       string        // eq/ne/gt/ge/lt/le/co/sw/ew/pr/and/or/not
+	Op       Operator      // 操作符
 	Attr     string        // 属性路径，如 userName/name.givenName
 	Value    string        // 比较值
 	Children []*FilterNode // 子节点（用于 and/or/not）
 }
 
 // filterCache 过滤器解析结果缓存
-// 优化：缓存解析结果，避免重复解析相同的过滤表达式
 var filterCache = &sync.Map{}
 
 // ParseFilter 解析 SCIM 过滤表达式
-// 支持: eq, ne, gt, ge, lt, le, co(contains), sw(startsWith), ew(endsWith), pr(present)
-// 支持逻辑操作: and, or, not
-// 优化：使用缓存提升重复过滤表达式的解析性能
 func ParseFilter(filter string) (*FilterNode, error) {
-	// 快速路径：空过滤器
 	if strings.TrimSpace(filter) == "" {
 		return nil, nil
 	}
 
-	// 规范化过滤器字符串用于缓存键
 	cacheKey := strings.TrimSpace(strings.ToLower(filter))
 
-	// 尝试从缓存获取
 	if cached, ok := filterCache.Load(cacheKey); ok {
 		return cached.(*FilterNode), nil
 	}
 
-	// 解析过滤器
 	parser := &filterParser{input: filter, pos: 0}
 	node, err := parser.parseExpression()
 	if err != nil {
 		return nil, err
 	}
 
-	// 存入缓存
 	filterCache.Store(cacheKey, node)
 	return node, nil
 }
 
 // ClearFilterCache 清空过滤器缓存
-// 用于测试或内存管理
 func ClearFilterCache() {
 	filterCache = &sync.Map{}
 }
@@ -63,7 +53,6 @@ type filterParser struct {
 	pos   int
 }
 
-// 解析表达式（处理 or）
 func (p *filterParser) parseExpression() (*FilterNode, error) {
 	left, err := p.parseAnd()
 	if err != nil {
@@ -76,13 +65,12 @@ func (p *filterParser) parseExpression() (*FilterNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		left = &FilterNode{Op: "or", Children: []*FilterNode{left, right}}
+		left = &FilterNode{Op: OpOr, Children: []*FilterNode{left, right}}
 	}
 
 	return left, nil
 }
 
-// 解析 and
 func (p *filterParser) parseAnd() (*FilterNode, error) {
 	left, err := p.parseNot()
 	if err != nil {
@@ -95,13 +83,12 @@ func (p *filterParser) parseAnd() (*FilterNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		left = &FilterNode{Op: "and", Children: []*FilterNode{left, right}}
+		left = &FilterNode{Op: OpAnd, Children: []*FilterNode{left, right}}
 	}
 
 	return left, nil
 }
 
-// 解析 not
 func (p *filterParser) parseNot() (*FilterNode, error) {
 	if p.peekKeyword("not") {
 		p.consumeKeyword("not")
@@ -109,16 +96,14 @@ func (p *filterParser) parseNot() (*FilterNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &FilterNode{Op: "not", Children: []*FilterNode{child}}, nil
+		return &FilterNode{Op: OpNot, Children: []*FilterNode{child}}, nil
 	}
 	return p.parsePrimary()
 }
 
-// 解析基本表达式
 func (p *filterParser) parsePrimary() (*FilterNode, error) {
 	p.skipWhitespace()
 
-	// 处理括号分组
 	if p.peek() == '(' {
 		p.consume()
 		node, err := p.parseExpression()
@@ -133,7 +118,6 @@ func (p *filterParser) parsePrimary() (*FilterNode, error) {
 		return node, nil
 	}
 
-	// 解析属性路径
 	attr, err := p.parseAttribute()
 	if err != nil {
 		return nil, err
@@ -141,12 +125,11 @@ func (p *filterParser) parsePrimary() (*FilterNode, error) {
 
 	p.skipWhitespace()
 
-	// 解析操作符（优化：使用预定义的操作符集合）
-	ops := []string{"eq", "ne", "gt", "ge", "lt", "le", "co", "sw", "ew", "pr"}
+	ops := AllComparisonOperators()
 	for _, op := range ops {
-		if p.peekKeyword(op) {
-			p.consumeKeyword(op)
-			if op == "pr" {
+		if p.peekKeyword(string(op)) {
+			p.consumeKeyword(string(op))
+			if op == OpPr {
 				return &FilterNode{Op: op, Attr: attr}, nil
 			}
 			p.skipWhitespace()
@@ -161,7 +144,6 @@ func (p *filterParser) parsePrimary() (*FilterNode, error) {
 	return nil, fmt.Errorf("expected operator after attribute %s", attr)
 }
 
-// 解析属性路径
 func (p *filterParser) parseAttribute() (string, error) {
 	p.skipWhitespace()
 	start := p.pos
@@ -177,16 +159,13 @@ func (p *filterParser) parseAttribute() (string, error) {
 	return strings.TrimSpace(p.input[start:p.pos]), nil
 }
 
-// 解析值
 func (p *filterParser) parseValue() (string, error) {
 	p.skipWhitespace()
 
-	// 字符串值（带引号）
 	if p.peek() == '"' {
 		return p.parseQuotedString()
 	}
 
-	// 布尔值或 null
 	start := p.pos
 	for p.pos < len(p.input) && !isWhitespace(p.peek()) && p.peek() != ')' {
 		p.consume()
@@ -199,16 +178,14 @@ func (p *filterParser) parseValue() (string, error) {
 	return p.input[start:p.pos], nil
 }
 
-// 解析带引号的字符串
 func (p *filterParser) parseQuotedString() (string, error) {
 	if p.peek() != '"' {
 		return "", errors.New("expected opening quote")
 	}
-	p.consume() // 跳过开头的 "
+	p.consume()
 
-	// 优化：预分配容量
 	var result strings.Builder
-	result.Grow(32) // 预分配 32 字节
+	result.Grow(32)
 
 	for p.pos < len(p.input) && p.peek() != '"' {
 		if p.peek() == '\\' && p.pos+1 < len(p.input) {
@@ -233,12 +210,11 @@ func (p *filterParser) parseQuotedString() (string, error) {
 	if p.peek() != '"' {
 		return "", errors.New("expected closing quote")
 	}
-	p.consume() // 跳过后面的 "
+	p.consume()
 
 	return result.String(), nil
 }
 
-// 辅助方法
 func (p *filterParser) peek() byte {
 	if p.pos >= len(p.input) {
 		return 0
@@ -282,24 +258,20 @@ func isAlphaNumByte(c byte) bool {
 	return isAlphaNum(rune(c))
 }
 
+// ValidateFilter 验证过滤器语法是否有效
+func ValidateFilter(filter string) error {
+	_, err := ParseFilter(filter)
+	return err
+}
+
 // MatchFilter 评估过滤器是否匹配对象
-// 优化：使用迭代而非递归，减少栈开销
 func MatchFilter(node *FilterNode, obj map[string]interface{}) (bool, error) {
 	if node == nil {
 		return true, nil
 	}
 
-	// 使用栈进行迭代遍历
-	type stackItem struct {
-		node     *FilterNode
-		result   bool
-		children []bool
-		index    int
-	}
-
-	// 简化：直接递归处理（对于一般深度的过滤器，递归性能足够）
 	switch node.Op {
-	case "and":
+	case OpAnd:
 		for _, child := range node.Children {
 			match, err := MatchFilter(child, obj)
 			if err != nil {
@@ -310,7 +282,7 @@ func MatchFilter(node *FilterNode, obj map[string]interface{}) (bool, error) {
 			}
 		}
 		return true, nil
-	case "or":
+	case OpOr:
 		for _, child := range node.Children {
 			match, err := MatchFilter(child, obj)
 			if err != nil {
@@ -321,131 +293,35 @@ func MatchFilter(node *FilterNode, obj map[string]interface{}) (bool, error) {
 			}
 		}
 		return false, nil
-	case "not":
+	case OpNot:
 		match, err := MatchFilter(node.Children[0], obj)
 		if err != nil {
 			return false, err
 		}
 		return !match, nil
-	case "eq":
-		return compareEq(node.Attr, node.Value, obj)
-	case "ne":
-		match, err := compareEq(node.Attr, node.Value, obj)
-		return !match, err
-	case "co":
-		return compareCo(node.Attr, node.Value, obj)
-	case "sw":
-		return compareSw(node.Attr, node.Value, obj)
-	case "ew":
-		return compareEw(node.Attr, node.Value, obj)
-	case "pr":
-		return comparePr(node.Attr, obj)
-	case "gt", "ge", "lt", "le":
-		return compareNumeric(node.Op, node.Attr, node.Value, obj)
+	case OpEq, OpNe, OpCo, OpSw, OpEw, OpPr, OpGt, OpGe, OpLt, OpLe:
+		return matchComparison(node, obj)
 	default:
 		return false, fmt.Errorf("unsupported operator: %s", node.Op)
 	}
 }
 
-// 比较函数
-// 优化：使用字符串构建器避免多次内存分配
-func compareEq(attr, value string, obj map[string]interface{}) (bool, error) {
-	actual := getValueByPath(obj, attr)
+// matchComparison 执行比较操作
+func matchComparison(node *FilterNode, obj map[string]interface{}) (bool, error) {
+	actual := getValueByPath(obj, node.Attr)
 	if actual == nil {
-		return value == "", nil
-	}
-	return fmt.Sprintf("%v", actual) == value, nil
-}
-
-func compareCo(attr, value string, obj map[string]interface{}) (bool, error) {
-	actual := getValueByPath(obj, attr)
-	if actual == nil {
-		return false, nil
-	}
-	return strings.Contains(fmt.Sprintf("%v", actual), value), nil
-}
-
-func compareSw(attr, value string, obj map[string]interface{}) (bool, error) {
-	actual := getValueByPath(obj, attr)
-	if actual == nil {
-		return false, nil
-	}
-	return strings.HasPrefix(fmt.Sprintf("%v", actual), value), nil
-}
-
-func compareEw(attr, value string, obj map[string]interface{}) (bool, error) {
-	actual := getValueByPath(obj, attr)
-	if actual == nil {
-		return false, nil
-	}
-	return strings.HasSuffix(fmt.Sprintf("%v", actual), value), nil
-}
-
-func comparePr(attr string, obj map[string]interface{}) (bool, error) {
-	actual := getValueByPath(obj, attr)
-	return actual != nil && fmt.Sprintf("%v", actual) != "", nil
-}
-
-func compareNumeric(op, attr, value string, obj map[string]interface{}) (bool, error) {
-	actual := getValueByPath(obj, attr)
-	if actual == nil {
-		return false, nil
-	}
-
-	actualNum, err1 := toFloat64(actual)
-	valueNum, err2 := strconv.ParseFloat(value, 64)
-
-	if err1 != nil || err2 != nil {
-		// 字符串比较
-		actualStr := fmt.Sprintf("%v", actual)
-		switch op {
-		case "gt":
-			return actualStr > value, nil
-		case "ge":
-			return actualStr >= value, nil
-		case "lt":
-			return actualStr < value, nil
-		case "le":
-			return actualStr <= value, nil
+		if node.Op == OpPr {
+			return false, nil
 		}
+		return node.Value == "", nil
 	}
 
-	switch op {
-	case "gt":
-		return actualNum > valueNum, nil
-	case "ge":
-		return actualNum >= valueNum, nil
-	case "lt":
-		return actualNum < valueNum, nil
-	case "le":
-		return actualNum <= valueNum, nil
-	}
-	return false, nil
-}
-
-func toFloat64(v interface{}) (float64, error) {
-	switch val := v.(type) {
-	case float64:
-		return val, nil
-	case float32:
-		return float64(val), nil
-	case int:
-		return float64(val), nil
-	case int32:
-		return float64(val), nil
-	case int64:
-		return float64(val), nil
-	case string:
-		return strconv.ParseFloat(val, 64)
-	default:
-		return 0, errors.New("not a number")
-	}
+	actualStr := FormatValue(actual)
+	return CompareValues(actualStr, node.Value, node.Op, nil)
 }
 
 // getValueByPath 从 map 中获取嵌套值
-// 优化：缓存路径分割结果
 func getValueByPath(obj map[string]interface{}, path string) interface{} {
-	// 快速路径：单层路径
 	if !strings.Contains(path, ".") && !strings.Contains(path, "[") {
 		return obj[path]
 	}
@@ -458,7 +334,6 @@ func getValueByPath(obj map[string]interface{}, path string) interface{} {
 			return nil
 		}
 
-		// 处理数组索引，如 emails[0]
 		if strings.Contains(part, "[") {
 			idx := strings.Index(part, "[")
 			fieldName := part[:idx]
@@ -492,20 +367,14 @@ func getValueByPath(obj map[string]interface{}, path string) interface{} {
 	return current
 }
 
-// ValidateFilter 验证过滤器语法是否有效
-func ValidateFilter(filter string) error {
-	_, err := ParseFilter(filter)
-	return err
-}
-
-// FilterToSQL 将过滤器转换为 SQL WHERE 子句（简化版）
+// FilterToSQL 将过滤器转换为 SQL WHERE 子句
 func FilterToSQL(node *FilterNode, columnMapping map[string]string) (string, []interface{}, error) {
 	if node == nil {
 		return "1=1", nil, nil
 	}
 
 	switch node.Op {
-	case "and":
+	case OpAnd:
 		var conditions []string
 		var args []interface{}
 		for _, child := range node.Children {
@@ -517,7 +386,7 @@ func FilterToSQL(node *FilterNode, columnMapping map[string]string) (string, []i
 			args = append(args, childArgs...)
 		}
 		return "(" + strings.Join(conditions, " AND ") + ")", args, nil
-	case "or":
+	case OpOr:
 		var conditions []string
 		var args []interface{}
 		for _, child := range node.Children {
@@ -529,40 +398,40 @@ func FilterToSQL(node *FilterNode, columnMapping map[string]string) (string, []i
 			args = append(args, childArgs...)
 		}
 		return "(" + strings.Join(conditions, " OR ") + ")", args, nil
-	case "not":
+	case OpNot:
 		cond, args, err := FilterToSQL(node.Children[0], columnMapping)
 		if err != nil {
 			return "", nil, err
 		}
 		return "NOT (" + cond + ")", args, nil
-	case "eq":
+	case OpEq:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " = ?", []interface{}{node.Value}, nil
-	case "ne":
+	case OpNe:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " != ?", []interface{}{node.Value}, nil
-	case "co":
+	case OpCo:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " LIKE ?", []interface{}{"%" + node.Value + "%"}, nil
-	case "sw":
+	case OpSw:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " LIKE ?", []interface{}{node.Value + "%"}, nil
-	case "ew":
+	case OpEw:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " LIKE ?", []interface{}{"%" + node.Value}, nil
-	case "pr":
+	case OpPr:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " IS NOT NULL AND " + col + " != ''", nil, nil
-	case "gt":
+	case OpGt:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " > ?", []interface{}{node.Value}, nil
-	case "ge":
+	case OpGe:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " >= ?", []interface{}{node.Value}, nil
-	case "lt":
+	case OpLt:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " < ?", []interface{}{node.Value}, nil
-	case "le":
+	case OpLe:
 		col := getColumn(node.Attr, columnMapping)
 		return col + " <= ?", []interface{}{node.Value}, nil
 	default:
@@ -574,12 +443,10 @@ func getColumn(attr string, mapping map[string]string) string {
 	if col, ok := mapping[attr]; ok {
 		return col
 	}
-	// 默认转换为蛇形命名
 	return toSnakeCase(attr)
 }
 
 // toSnakeCase 将驼峰命名转换为蛇形命名
-// 优化：使用预编译的正则表达式
 var (
 	camelCaseRe1 = regexp.MustCompile("([a-z0-9])([A-Z])")
 	camelCaseRe2 = regexp.MustCompile("([A-Z]+)([A-Z][a-z])")

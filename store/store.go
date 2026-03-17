@@ -106,6 +106,11 @@ func PatchResource(s Store, id string, data any, ops []model.PatchOperation) err
 
 // handleAddOrReplace 处理 add 和 replace 操作
 func handleAddOrReplace(s Store, id string, data any, op model.PatchOperation, isGroup, isUser bool) error {
+	// 检查路径是否包含过滤条件
+	if strings.Contains(op.Path, "[") && strings.Contains(op.Path, "]") {
+		return handlePathWithFilter(data, op)
+	}
+
 	// 成员字段的处理（Group 类型）
 	if op.Path == "members" && isGroup {
 		return handleAddMembers(s, id, op.Value)
@@ -161,6 +166,422 @@ func handleAddOrReplace(s Store, id string, data any, op model.PatchOperation, i
 	if op.Value != nil {
 		return util.MergeValue(data, op.Value)
 	}
+	return nil
+}
+
+// handlePathWithFilter 处理带有过滤条件的路径更新
+// 支持如 phoneNumbers[type eq "mobile"] 或 addresses[type eq "work"] 的路径
+// 对于 Add 操作：如果找不到匹配项，添加新项
+// 对于 Replace 操作：如果找不到匹配项，返回错误
+func handlePathWithFilter(data any, op model.PatchOperation) error {
+	// 解析路径
+	parsedPath, err := util.ParsePathWithFilter(op.Path)
+	if err != nil {
+		return fmt.Errorf("failed to parse path with filter: %w", err)
+	}
+
+	// 获取多值属性
+	user, ok := data.(*model.User)
+	if !ok {
+		return fmt.Errorf("data must be a User pointer")
+	}
+
+	// 根据属性名称处理不同的多值属性
+	switch parsedPath.AttributeName {
+	case "phoneNumbers":
+		return handlePhoneNumbersWithFilter(user, parsedPath, op)
+	case "addresses":
+		return handleAddressesWithFilter(user, parsedPath, op)
+	case "emails":
+		return handleEmailsWithFilter(user, parsedPath, op)
+	case "roles":
+		return handleRolesWithFilter(user, parsedPath, op)
+	default:
+		return fmt.Errorf("unsupported multi-valued attribute: %s", parsedPath.AttributeName)
+	}
+}
+
+// handlePhoneNumbersWithFilter 处理带有过滤条件的电话号码更新
+// 对于 Add 操作：如果找不到匹配项，添加新项；如果找到匹配项，更新匹配项
+// 对于 Replace 操作: 如果找不到匹配项，返回错误；如果找到匹配项，更新匹配项
+func handlePhoneNumbersWithFilter(user *model.User, parsedPath *util.ParsedPath, op model.PatchOperation) error {
+	// 将 phoneNumbers 转换为 map[string]interface{} 数组
+	items := make([]map[string]interface{}, len(user.PhoneNumbers))
+	for i, phone := range user.PhoneNumbers {
+		items[i] = map[string]interface{}{
+			"value":   phone.Value,
+			"type":    phone.Type,
+			"primary": phone.Primary,
+		}
+	}
+
+	// 查找匹配的索引
+	indices, err := util.FindMatchingIndices(items, parsedPath.Filter)
+	if err != nil {
+		return fmt.Errorf("failed to find matching phone numbers: %w", err)
+	}
+
+	// 对于 Add 操作，
+	if op.Op == "add" {
+		// Add 操作: 如果找不到匹配项，添加新项
+		if len(indices) == 0 {
+			// 解析 value 并添加新项
+			valueMap, ok := op.Value.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("value must be a map for add operation")
+			}
+			newPhone, err := parsePhoneNumber(valueMap, user.ID)
+			if err != nil {
+				return err
+			}
+			user.PhoneNumbers = append(user.PhoneNumbers, newPhone)
+			return nil
+		}
+		// 如果找到匹配项，更新匹配项
+	} else {
+		// Replace 操作: 如果找不到匹配项，返回错误
+		if len(indices) == 0 {
+			return util.ErrNoMatchingItems
+		}
+	}
+
+	// 如果有子路径，更新匹配项的子属性
+	if parsedPath.SubPath != "" {
+		valueMap, ok := op.Value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("value must be a map for sub-path update")
+		}
+
+		for _, idx := range indices {
+			if subValue, exists := valueMap[parsedPath.SubPath]; exists {
+				items[idx][parsedPath.SubPath] = subValue
+			}
+		}
+	} else {
+		// 更新整个匹配项
+		valueMap, ok := op.Value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("value must be a map for item update")
+		}
+
+		for _, idx := range indices {
+			for key, val := range valueMap {
+				items[idx][key] = val
+			}
+		}
+	}
+
+	// 将更新后的数据写回 user.PhoneNumbers
+	for i, item := range items {
+		if i < len(user.PhoneNumbers) {
+			if value, ok := item["value"].(string); ok {
+				user.PhoneNumbers[i].Value = value
+			}
+			if phoneType, ok := item["type"].(string); ok {
+				user.PhoneNumbers[i].Type = phoneType
+			}
+			if primary, ok := item["primary"].(bool); ok {
+				user.PhoneNumbers[i].Primary = primary
+			}
+		}
+	}
+
+	return nil
+}
+
+// handleAddressesWithFilter 处理带有过滤条件的地址更新
+// 对于 Add 操作: 如果找不到匹配项,添加新项; 如果找到匹配项,更新匹配项
+// 对于 Replace 操作: 如果找不到匹配项,返回错误; 如果找到匹配项,更新匹配项
+func handleAddressesWithFilter(user *model.User, parsedPath *util.ParsedPath, op model.PatchOperation) error {
+	// 将 addresses 转换为 map[string]interface{} 数组
+	items := make([]map[string]interface{}, len(user.Addresses))
+	for i, addr := range user.Addresses {
+		items[i] = map[string]interface{}{
+			"value":         addr.Value,
+			"display":       addr.Display,
+			"streetAddress": addr.StreetAddress,
+			"locality":      addr.Locality,
+			"region":        addr.Region,
+			"postalCode":    addr.PostalCode,
+			"country":       addr.Country,
+			"formatted":     addr.Formatted,
+			"type":          addr.Type,
+			"primary":       addr.Primary,
+		}
+	}
+
+	// 查找匹配的索引
+	indices, err := util.FindMatchingIndices(items, parsedPath.Filter)
+	if err != nil {
+		return fmt.Errorf("failed to find matching addresses: %w", err)
+	}
+
+	// 对于 Add 操作
+	if op.Op == "add" {
+		// Add 操作: 如果找不到匹配项,添加新项
+		if len(indices) == 0 {
+			// 解析 value 并添加新项
+			valueMap, ok := op.Value.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("value must be a map for add operation")
+			}
+			newAddress, err := parseAddress(valueMap, user.ID)
+			if err != nil {
+				return err
+			}
+			user.Addresses = append(user.Addresses, newAddress)
+			return nil
+		}
+		// 如果找到匹配项,继续执行更新操作
+	} else {
+		// Replace 操作: 如果找不到匹配项,返回错误
+		if len(indices) == 0 {
+			return util.ErrNoMatchingItems
+		}
+	}
+
+	// 如果有子路径,更新匹配项的子属性
+	if parsedPath.SubPath != "" {
+		valueMap, ok := op.Value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("value must be a map for sub-path update")
+		}
+
+		for _, idx := range indices {
+			if subValue, exists := valueMap[parsedPath.SubPath]; exists {
+				items[idx][parsedPath.SubPath] = subValue
+			}
+		}
+	} else {
+		// 更新整个匹配项
+		valueMap, ok := op.Value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("value must be a map for item update")
+		}
+
+		for _, idx := range indices {
+			for key, val := range valueMap {
+				items[idx][key] = val
+			}
+		}
+	}
+
+	// 将更新后的数据写回 user.Addresses
+	for i, item := range items {
+		if i < len(user.Addresses) {
+			if value, ok := item["value"].(string); ok {
+				user.Addresses[i].Value = value
+			}
+			if display, ok := item["display"].(string); ok {
+				user.Addresses[i].Display = display
+			}
+			if streetAddress, ok := item["streetAddress"].(string); ok {
+				user.Addresses[i].StreetAddress = streetAddress
+			}
+			if locality, ok := item["locality"].(string); ok {
+				user.Addresses[i].Locality = locality
+			}
+			if region, ok := item["region"].(string); ok {
+				user.Addresses[i].Region = region
+			}
+			if postalCode, ok := item["postalCode"].(string); ok {
+				user.Addresses[i].PostalCode = postalCode
+			}
+			if country, ok := item["country"].(string); ok {
+				user.Addresses[i].Country = country
+			}
+			if formatted, ok := item["formatted"].(string); ok {
+				user.Addresses[i].Formatted = formatted
+			}
+			if addrType, ok := item["type"].(string); ok {
+				user.Addresses[i].Type = addrType
+			}
+			if primary, ok := item["primary"].(bool); ok {
+				user.Addresses[i].Primary = primary
+			}
+		}
+	}
+
+	return nil
+}
+
+// handleEmailsWithFilter 处理带有过滤条件的邮箱更新
+// 对于 Add 操作: 如果找不到匹配项,添加新项; 如果找到匹配项,更新匹配项
+// 对于 Replace 操作: 如果找不到匹配项,返回错误; 如果找到匹配项,更新匹配项
+func handleEmailsWithFilter(user *model.User, parsedPath *util.ParsedPath, op model.PatchOperation) error {
+	// 将 emails 转换为 map[string]interface{} 数组
+	items := make([]map[string]interface{}, len(user.Emails))
+	for i, email := range user.Emails {
+		items[i] = map[string]interface{}{
+			"value":   email.Value,
+			"type":    email.Type,
+			"primary": email.Primary,
+		}
+	}
+
+	// 查找匹配的索引
+	indices, err := util.FindMatchingIndices(items, parsedPath.Filter)
+	if err != nil {
+		return fmt.Errorf("failed to find matching emails: %w", err)
+	}
+
+	// 对于 Add 操作
+	if op.Op == "add" {
+		// Add 操作: 如果找不到匹配项,添加新项
+		if len(indices) == 0 {
+			// 解析 value 并添加新项
+			valueMap, ok := op.Value.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("value must be a map for add operation")
+			}
+			newEmail, err := parseEmail(valueMap, user.ID)
+			if err != nil {
+				return err
+			}
+			user.Emails = append(user.Emails, newEmail)
+			return nil
+		}
+		// 如果找到匹配项,继续执行更新操作
+	} else {
+		// Replace 操作: 如果找不到匹配项,返回错误
+		if len(indices) == 0 {
+			return util.ErrNoMatchingItems
+		}
+	}
+
+	// 如果有子路径,更新匹配项的子属性
+	if parsedPath.SubPath != "" {
+		valueMap, ok := op.Value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("value must be a map for sub-path update")
+		}
+
+		for _, idx := range indices {
+			if subValue, exists := valueMap[parsedPath.SubPath]; exists {
+				items[idx][parsedPath.SubPath] = subValue
+			}
+		}
+	} else {
+		// 更新整个匹配项
+		valueMap, ok := op.Value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("value must be a map for item update")
+		}
+
+		for _, idx := range indices {
+			for key, val := range valueMap {
+				items[idx][key] = val
+			}
+		}
+	}
+
+	// 将更新后的数据写回 user.Emails
+	for i, item := range items {
+		if i < len(user.Emails) {
+			if value, ok := item["value"].(string); ok {
+				user.Emails[i].Value = value
+			}
+			if emailType, ok := item["type"].(string); ok {
+				user.Emails[i].Type = emailType
+			}
+			if primary, ok := item["primary"].(bool); ok {
+				user.Emails[i].Primary = primary
+			}
+		}
+	}
+
+	return nil
+}
+
+// handleRolesWithFilter 处理带有过滤条件的角色更新
+// 对于 Add 操作: 如果找不到匹配项,添加新项; 如果找到匹配项,更新匹配项
+// 对于 Replace 操作: 如果找不到匹配项,返回错误; 如果找到匹配项,更新匹配项
+func handleRolesWithFilter(user *model.User, parsedPath *util.ParsedPath, op model.PatchOperation) error {
+	// 将 roles 转换为 map[string]interface{} 数组
+	items := make([]map[string]interface{}, len(user.Roles))
+	for i, role := range user.Roles {
+		items[i] = map[string]interface{}{
+			"value":   role.Value,
+			"type":    role.Type,
+			"display": role.Display,
+			"primary": role.Primary,
+		}
+	}
+
+	// 查找匹配的索引
+	indices, err := util.FindMatchingIndices(items, parsedPath.Filter)
+	if err != nil {
+		return fmt.Errorf("failed to find matching roles: %w", err)
+	}
+
+	// 对于 Add 操作
+	if op.Op == "add" {
+		// Add 操作: 如果找不到匹配项,添加新项
+		if len(indices) == 0 {
+			// 解析 value 并添加新项
+			valueMap, ok := op.Value.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("value must be a map for add operation")
+			}
+			newRole, err := parseRole(valueMap, user.ID)
+			if err != nil {
+				return err
+			}
+			user.Roles = append(user.Roles, newRole)
+			return nil
+		}
+		// 如果找到匹配项,继续执行更新操作
+	} else {
+		// Replace 操作: 如果找不到匹配项,返回错误
+		if len(indices) == 0 {
+			return util.ErrNoMatchingItems
+		}
+	}
+
+	// 如果有子路径,更新匹配项的子属性
+	if parsedPath.SubPath != "" {
+		valueMap, ok := op.Value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("value must be a map for sub-path update")
+		}
+
+		for _, idx := range indices {
+			if subValue, exists := valueMap[parsedPath.SubPath]; exists {
+				items[idx][parsedPath.SubPath] = subValue
+			}
+		}
+	} else {
+		// 更新整个匹配项
+		valueMap, ok := op.Value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("value must be a map for item update")
+		}
+
+		for _, idx := range indices {
+			for key, val := range valueMap {
+				items[idx][key] = val
+			}
+		}
+	}
+
+	// 将更新后的数据写回 user.Roles
+	for i, item := range items {
+		if i < len(user.Roles) {
+			if value, ok := item["value"].(string); ok {
+				user.Roles[i].Value = value
+			}
+			if roleType, ok := item["type"].(string); ok {
+				user.Roles[i].Type = roleType
+			}
+			if display, ok := item["display"].(string); ok {
+				user.Roles[i].Display = display
+			}
+			if primary, ok := item["primary"].(bool); ok {
+				user.Roles[i].Primary = primary
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -232,6 +653,11 @@ func handleAddGroups(s Store, userID string, value any) error {
 
 // handleRemove 处理 remove 操作
 func handleRemove(s Store, id string, data any, op model.PatchOperation, isGroup, isUser bool) error {
+	// 检查路径是否包含过滤条件
+	if strings.Contains(op.Path, "[") && strings.Contains(op.Path, "]") {
+		return handleRemoveWithFilter(data, op)
+	}
+
 	// 成员字段的处理（Group 类型）
 	if op.Path == "members" && isGroup {
 		return handleRemoveMembers(s, id, op.Value)
@@ -264,6 +690,167 @@ func handleRemove(s Store, id string, data any, op model.PatchOperation, isGroup
 	if op.Value != nil {
 		return util.RemoveValue(data, op.Value)
 	}
+	return nil
+}
+
+// handleRemoveWithFilter 处理带有过滤条件的删除操作
+func handleRemoveWithFilter(data any, op model.PatchOperation) error {
+	// 解析路径
+	parsedPath, err := util.ParsePathWithFilter(op.Path)
+	if err != nil {
+		return fmt.Errorf("failed to parse path with filter: %w", err)
+	}
+
+	// 获取多值属性
+	user, ok := data.(*model.User)
+	if !ok {
+		return fmt.Errorf("data must be a User pointer")
+	}
+
+	// 根据属性名称处理不同的多值属性
+	switch parsedPath.AttributeName {
+	case "phoneNumbers":
+		return handleRemovePhoneNumbersWithFilter(user, parsedPath)
+	case "addresses":
+		return handleRemoveAddressesWithFilter(user, parsedPath)
+	case "emails":
+		return handleRemoveEmailsWithFilter(user, parsedPath)
+	case "roles":
+		return handleRemoveRolesWithFilter(user, parsedPath)
+	default:
+		return fmt.Errorf("unsupported multi-valued attribute: %s", parsedPath.AttributeName)
+	}
+}
+
+// handleRemovePhoneNumbersWithFilter 处理带有过滤条件的电话号码删除
+func handleRemovePhoneNumbersWithFilter(user *model.User, parsedPath *util.ParsedPath) error {
+	// 将 phoneNumbers 转换为 map[string]interface{} 数组
+	items := make([]map[string]interface{}, len(user.PhoneNumbers))
+	for i, phone := range user.PhoneNumbers {
+		items[i] = map[string]interface{}{
+			"value":   phone.Value,
+			"type":    phone.Type,
+			"primary": phone.Primary,
+		}
+	}
+
+	// 查找匹配的索引
+	indices, err := util.FindMatchingIndices(items, parsedPath.Filter)
+	if err != nil {
+		return fmt.Errorf("failed to find matching phone numbers: %w", err)
+	}
+
+	if len(indices) == 0 {
+		return util.ErrNoMatchingItems
+	}
+
+	// 从后向前删除，避免索引变化
+	for i := len(indices) - 1; i >= 0; i-- {
+		idx := indices[i]
+		user.PhoneNumbers = append(user.PhoneNumbers[:idx], user.PhoneNumbers[idx+1:]...)
+	}
+
+	return nil
+}
+
+// handleRemoveAddressesWithFilter 处理带有过滤条件的地址删除
+func handleRemoveAddressesWithFilter(user *model.User, parsedPath *util.ParsedPath) error {
+	// 将 addresses 转换为 map[string]interface{} 数组
+	items := make([]map[string]interface{}, len(user.Addresses))
+	for i, addr := range user.Addresses {
+		items[i] = map[string]interface{}{
+			"value":         addr.Value,
+			"display":       addr.Display,
+			"streetAddress": addr.StreetAddress,
+			"locality":      addr.Locality,
+			"region":        addr.Region,
+			"postalCode":    addr.PostalCode,
+			"country":       addr.Country,
+			"formatted":     addr.Formatted,
+			"type":          addr.Type,
+			"primary":       addr.Primary,
+		}
+	}
+
+	// 查找匹配的索引
+	indices, err := util.FindMatchingIndices(items, parsedPath.Filter)
+	if err != nil {
+		return fmt.Errorf("failed to find matching addresses: %w", err)
+	}
+
+	if len(indices) == 0 {
+		return util.ErrNoMatchingItems
+	}
+
+	// 从后向前删除，避免索引变化
+	for i := len(indices) - 1; i >= 0; i-- {
+		idx := indices[i]
+		user.Addresses = append(user.Addresses[:idx], user.Addresses[idx+1:]...)
+	}
+
+	return nil
+}
+
+// handleRemoveEmailsWithFilter 处理带有过滤条件的邮箱删除
+func handleRemoveEmailsWithFilter(user *model.User, parsedPath *util.ParsedPath) error {
+	// 将 emails 转换为 map[string]interface{} 数组
+	items := make([]map[string]interface{}, len(user.Emails))
+	for i, email := range user.Emails {
+		items[i] = map[string]interface{}{
+			"value":   email.Value,
+			"type":    email.Type,
+			"primary": email.Primary,
+		}
+	}
+
+	// 查找匹配的索引
+	indices, err := util.FindMatchingIndices(items, parsedPath.Filter)
+	if err != nil {
+		return fmt.Errorf("failed to find matching emails: %w", err)
+	}
+
+	if len(indices) == 0 {
+		return util.ErrNoMatchingItems
+	}
+
+	// 从后向前删除，避免索引变化
+	for i := len(indices) - 1; i >= 0; i-- {
+		idx := indices[i]
+		user.Emails = append(user.Emails[:idx], user.Emails[idx+1:]...)
+	}
+
+	return nil
+}
+
+// handleRemoveRolesWithFilter 处理带有过滤条件的角色删除
+func handleRemoveRolesWithFilter(user *model.User, parsedPath *util.ParsedPath) error {
+	// 将 roles 转换为 map[string]interface{} 数组
+	items := make([]map[string]interface{}, len(user.Roles))
+	for i, role := range user.Roles {
+		items[i] = map[string]interface{}{
+			"value":   role.Value,
+			"type":    role.Type,
+			"display": role.Display,
+			"primary": role.Primary,
+		}
+	}
+
+	// 查找匹配的索引
+	indices, err := util.FindMatchingIndices(items, parsedPath.Filter)
+	if err != nil {
+		return fmt.Errorf("failed to find matching roles: %w", err)
+	}
+
+	if len(indices) == 0 {
+		return util.ErrNoMatchingItems
+	}
+
+	// 从后向前删除，避免索引变化
+	for i := len(indices) - 1; i >= 0; i-- {
+		idx := indices[i]
+		user.Roles = append(user.Roles[:idx], user.Roles[idx+1:]...)
+	}
+
 	return nil
 }
 

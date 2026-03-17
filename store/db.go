@@ -501,9 +501,11 @@ func (d *DBStore) PatchUser(id string, ops []model.PatchOperation) error {
 		u.Version = generateVersion()
 		// UpdatedAt 由 GORM 的 autoUpdateTime 自动更新
 
-		// 保存更新（不自动保存关联，因为 emails 和 roles 已通过 syncEmails/syncRoles 处理）
-		// 清空 Emails 和 Roles 避免 GORM 重复保存
+		// 保存更新（不自动保存关联，因为关联已通过 sync* 函数处理）
+		// 清空关联字段避免 GORM 重复保存
 		u.Emails = nil
+		u.PhoneNumbers = nil
+		u.Addresses = nil
 		u.Roles = nil
 		return tx.Save(&u).Error
 	})
