@@ -11,9 +11,20 @@ import (
 	"scim-go/util"
 )
 
+// 全局处理器实例
+var (
+	emailHandler     = EmailHandler{}
+	phoneHandler     = PhoneHandler{}
+	addressHandler   = AddressHandler{}
+	roleHandler      = RoleHandler{}
+	emailProcessor   = NewGenericMultiValueProcessor(emailHandler)
+	phoneProcessor   = NewGenericMultiValueProcessor(phoneHandler)
+	addressProcessor = NewGenericMultiValueProcessor(addressHandler)
+	roleProcessor    = NewGenericMultiValueProcessor(roleHandler)
+)
+
 // generateVersion 生成 SCIM 版本标识符（ETag 格式）
 func generateVersion() string {
-	// 使用当前时间戳生成唯一版本标识
 	timestamp := time.Now().UnixNano()
 	hash := sha1.New()
 	hash.Write([]byte(fmt.Sprintf("%d", timestamp)))
@@ -230,7 +241,7 @@ func handlePhoneNumbersWithFilter(user *model.User, parsedPath *util.ParsedPath,
 			if !ok {
 				return fmt.Errorf("value must be a map for add operation")
 			}
-			newPhone, err := parsePhoneNumber(valueMap, user.ID)
+			newPhone, err := phoneHandler.Parse(valueMap, user.ID)
 			if err != nil {
 				return err
 			}
@@ -325,7 +336,7 @@ func handleAddressesWithFilter(user *model.User, parsedPath *util.ParsedPath, op
 			if !ok {
 				return fmt.Errorf("value must be a map for add operation")
 			}
-			newAddress, err := parseAddress(valueMap, user.ID)
+			newAddress, err := addressHandler.Parse(valueMap, user.ID)
 			if err != nil {
 				return err
 			}
@@ -523,7 +534,7 @@ func handleRolesWithFilter(user *model.User, parsedPath *util.ParsedPath, op mod
 			if !ok {
 				return fmt.Errorf("value must be a map for add operation")
 			}
-			newRole, err := parseRole(valueMap, user.ID)
+			newRole, err := roleHandler.Parse(valueMap, user.ID)
 			if err != nil {
 				return err
 			}
@@ -950,385 +961,118 @@ func parseEmail(email any, userID string) (model.Email, error) {
 
 // handleAddEmails 处理添加 emails 到用户
 func handleAddEmails(data any, value any) error {
-	if value == nil {
-		return nil
-	}
-	emails, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("emails value must be an array")
-	}
 	user, ok := data.(*model.User)
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
-	// 检查重复的 email（使用小写作为键）
-	existingEmails := make(map[string]bool)
-	for _, e := range user.Emails {
-		existingEmails[strings.ToLower(e.Value)] = true
-	}
-	for _, email := range emails {
-		parsedEmail, err := parseEmail(email, user.ID)
-		if err != nil {
-			return err
-		}
-		// 检查是否与现有 email 重复（不区分大小写）
-		if existingEmails[strings.ToLower(parsedEmail.Value)] {
-			return fmt.Errorf("duplicate email address: %s", parsedEmail.Value)
-		}
-		user.Emails = append(user.Emails, parsedEmail)
-		existingEmails[strings.ToLower(parsedEmail.Value)] = true
-	}
-	return nil
+	return emailProcessor.HandleAdd(
+		&user.Emails,
+		value,
+		user.ID,
+		func(e model.Email) string { return e.Value },
+	)
 }
 
 // handleReplaceEmails 处理替换用户的 emails
 func handleReplaceEmails(data any, value any) error {
-	if value == nil {
-		return nil
-	}
-	emails, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("emails value must be an array")
-	}
 	user, ok := data.(*model.User)
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
-	user.Emails = make([]model.Email, 0, len(emails))
-	// 检查重复的 email
-	existingEmails := make(map[string]bool)
-	for _, email := range emails {
-		parsedEmail, err := parseEmail(email, user.ID)
-		if err != nil {
-			return err
-		}
-		// 检查是否重复
-		if existingEmails[parsedEmail.Value] {
-			return fmt.Errorf("duplicate email address in request: %s", parsedEmail.Value)
-		}
-		user.Emails = append(user.Emails, parsedEmail)
-		existingEmails[parsedEmail.Value] = true
-	}
-	return nil
-}
-
-// parseRole 解析单个role对象
-func parseRole(role any, userID string) (model.Role, error) {
-	roleMap, ok := role.(map[string]any)
-	if !ok {
-		return model.Role{}, fmt.Errorf("role must be an object")
-	}
-	roleValueVal, ok := roleMap["value"]
-	if !ok {
-		return model.Role{}, fmt.Errorf("role must have a value field")
-	}
-	roleValue, ok := roleValueVal.(string)
-	if !ok {
-		return model.Role{}, fmt.Errorf("role value must be a string")
-	}
-	if err := util.ValidateRoleDefinition(roleValue); err != nil {
-		return model.Role{}, fmt.Errorf("invalid role definition: %w", err)
-	}
-	roleType := ""
-	if t, ok := roleMap["type"].(string); ok {
-		roleType = t
-	}
-	display := ""
-	if d, ok := roleMap["display"].(string); ok {
-		display = d
-	}
-	primary := false
-	if p, ok := roleMap["primary"].(bool); ok {
-		primary = p
-	}
-	return model.Role{
-		UserID:  userID,
-		Value:   roleValue,
-		Type:    roleType,
-		Display: display,
-		Primary: primary,
-	}, nil
-}
-
-// parsePhoneNumber 解析单个phoneNumber对象
-func parsePhoneNumber(phone any, userID string) (model.PhoneNumber, error) {
-	phoneMap, ok := phone.(map[string]any)
-	if !ok {
-		return model.PhoneNumber{}, fmt.Errorf("phone number must be an object")
-	}
-	phoneValueVal, ok := phoneMap["value"]
-	if !ok {
-		return model.PhoneNumber{}, fmt.Errorf("phone number must have a value field")
-	}
-	phoneValue, ok := phoneValueVal.(string)
-	if !ok {
-		return model.PhoneNumber{}, fmt.Errorf("phone number value must be a string")
-	}
-	phoneType := "work"
-	if t, ok := phoneMap["type"].(string); ok {
-		phoneType = t
-	}
-	primary := false
-	if p, ok := phoneMap["primary"].(bool); ok {
-		primary = p
-	}
-	return model.PhoneNumber{
-		UserID:  userID,
-		Value:   phoneValue,
-		Type:    phoneType,
-		Primary: primary,
-	}, nil
-}
-
-// parseAddress 解析单个address对象
-func parseAddress(address any, userID string) (model.Address, error) {
-	addressMap, ok := address.(map[string]any)
-	if !ok {
-		return model.Address{}, fmt.Errorf("address must be an object")
-	}
-	value := ""
-	if v, ok := addressMap["value"].(string); ok {
-		value = v
-	}
-	display := ""
-	if d, ok := addressMap["display"].(string); ok {
-		display = d
-	}
-	streetAddress := ""
-	if s, ok := addressMap["streetAddress"].(string); ok {
-		streetAddress = s
-	}
-	locality := ""
-	if l, ok := addressMap["locality"].(string); ok {
-		locality = l
-	}
-	region := ""
-	if r, ok := addressMap["region"].(string); ok {
-		region = r
-	}
-	postalCode := ""
-	if p, ok := addressMap["postalCode"].(string); ok {
-		postalCode = p
-	}
-	country := ""
-	if c, ok := addressMap["country"].(string); ok {
-		country = c
-	}
-	addressType := "work"
-	if t, ok := addressMap["type"].(string); ok {
-		addressType = t
-	}
-	primary := false
-	if p, ok := addressMap["primary"].(bool); ok {
-		primary = p
-	}
-	return model.Address{
-		UserID:        userID,
-		Value:         value,
-		Display:       display,
-		StreetAddress: streetAddress,
-		Locality:      locality,
-		Region:        region,
-		PostalCode:    postalCode,
-		Country:       country,
-		Type:          addressType,
-		Primary:       primary,
-	}, nil
+	return emailProcessor.HandleReplace(
+		&user.Emails,
+		value,
+		user.ID,
+		func(e model.Email) string { return e.Value },
+	)
 }
 
 // handleAddRoles 处理添加 roles 到用户
 func handleAddRoles(data any, value any) error {
-	if value == nil {
-		return nil
-	}
-	roles, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("roles value must be an array")
-	}
 	user, ok := data.(*model.User)
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
-	// 检查重复的 role（使用小写作为键）
-	existingRoles := make(map[string]bool)
-	for _, r := range user.Roles {
-		existingRoles[strings.ToLower(r.Value)] = true
-	}
-	for _, role := range roles {
-		parsedRole, err := parseRole(role, user.ID)
-		if err != nil {
-			return err
-		}
-		// 检查是否与现有 role 重复（不区分大小写）
-		if existingRoles[strings.ToLower(parsedRole.Value)] {
-			return fmt.Errorf("duplicate role: %s", parsedRole.Value)
-		}
-		user.Roles = append(user.Roles, parsedRole)
-		existingRoles[strings.ToLower(parsedRole.Value)] = true
-	}
-	return nil
+	return roleProcessor.HandleAdd(
+		&user.Roles,
+		value,
+		user.ID,
+		func(r model.Role) string { return r.Value },
+	)
 }
 
 // handleReplaceRoles 处理替换用户的 roles
 func handleReplaceRoles(data any, value any) error {
-	if value == nil {
-		return nil
-	}
-	roles, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("roles value must be an array")
-	}
 	user, ok := data.(*model.User)
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
-	user.Roles = make([]model.Role, 0, len(roles))
-	// 检查重复的 role（使用小写作为键）
-	existingRoles := make(map[string]bool)
-	for _, role := range roles {
-		parsedRole, err := parseRole(role, user.ID)
-		if err != nil {
-			return err
-		}
-		// 检查是否重复（不区分大小写）
-		if existingRoles[strings.ToLower(parsedRole.Value)] {
-			return fmt.Errorf("duplicate role in request: %s", parsedRole.Value)
-		}
-		user.Roles = append(user.Roles, parsedRole)
-		existingRoles[strings.ToLower(parsedRole.Value)] = true
-	}
-	return nil
+	return roleProcessor.HandleReplace(
+		&user.Roles,
+		value,
+		user.ID,
+		func(r model.Role) string { return r.Value },
+	)
 }
 
 // handleAddPhoneNumbers 处理添加 phoneNumbers 到用户
 func handleAddPhoneNumbers(data any, value any) error {
-	if value == nil {
-		return nil
-	}
-	phoneNumbers, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("phoneNumbers value must be an array")
-	}
 	user, ok := data.(*model.User)
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
-	// 检查重复的 phoneNumber（使用小写作为键）
-	existingPhoneNumbers := make(map[string]bool)
-	for _, p := range user.PhoneNumbers {
-		existingPhoneNumbers[strings.ToLower(p.Value)] = true
-	}
-	for _, phone := range phoneNumbers {
-		parsedPhone, err := parsePhoneNumber(phone, user.ID)
-		if err != nil {
-			return err
-		}
-		// 检查是否与现有 phoneNumber 重复（不区分大小写）
-		if existingPhoneNumbers[strings.ToLower(parsedPhone.Value)] {
-			return fmt.Errorf("duplicate phone number: %s", parsedPhone.Value)
-		}
-		user.PhoneNumbers = append(user.PhoneNumbers, parsedPhone)
-		existingPhoneNumbers[strings.ToLower(parsedPhone.Value)] = true
-	}
-	return nil
+	return phoneProcessor.HandleAdd(
+		&user.PhoneNumbers,
+		value,
+		user.ID,
+		func(p model.PhoneNumber) string { return p.Value },
+	)
 }
 
 // handleReplacePhoneNumbers 处理替换用户的 phoneNumbers
 func handleReplacePhoneNumbers(data any, value any) error {
-	if value == nil {
-		return nil
-	}
-	phoneNumbers, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("phoneNumbers value must be an array")
-	}
 	user, ok := data.(*model.User)
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
-	user.PhoneNumbers = make([]model.PhoneNumber, 0, len(phoneNumbers))
-	// 检查重复的 phoneNumber（使用小写作为键）
-	existingPhoneNumbers := make(map[string]bool)
-	for _, phone := range phoneNumbers {
-		parsedPhone, err := parsePhoneNumber(phone, user.ID)
-		if err != nil {
-			return err
-		}
-		// 检查是否重复（不区分大小写）
-		if existingPhoneNumbers[strings.ToLower(parsedPhone.Value)] {
-			return fmt.Errorf("duplicate phone number in request: %s", parsedPhone.Value)
-		}
-		user.PhoneNumbers = append(user.PhoneNumbers, parsedPhone)
-		existingPhoneNumbers[strings.ToLower(parsedPhone.Value)] = true
-	}
-	return nil
+	return phoneProcessor.HandleReplace(
+		&user.PhoneNumbers,
+		value,
+		user.ID,
+		func(p model.PhoneNumber) string { return p.Value },
+	)
 }
 
 // handleAddAddresses 处理添加 addresses 到用户
 func handleAddAddresses(data any, value any) error {
-	if value == nil {
-		return nil
-	}
-	addresses, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("addresses value must be an array")
-	}
 	user, ok := data.(*model.User)
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
-	// 检查重复的 address
-	existingAddresses := make(map[string]bool)
-	for _, a := range user.Addresses {
-		key := strings.ToLower(a.StreetAddress + "," + a.Locality + "," + a.Region + "," + a.PostalCode + "," + a.Country)
-		existingAddresses[key] = true
-	}
-	for _, address := range addresses {
-		parsedAddress, err := parseAddress(address, user.ID)
-		if err != nil {
-			return err
-		}
-		// 检查是否与现有 address 重复
-		key := strings.ToLower(parsedAddress.StreetAddress + "," + parsedAddress.Locality + "," + parsedAddress.Region + "," + parsedAddress.PostalCode + "," + parsedAddress.Country)
-		if existingAddresses[key] {
-			return fmt.Errorf("duplicate address")
-		}
-		user.Addresses = append(user.Addresses, parsedAddress)
-		existingAddresses[key] = true
-	}
-	return nil
+	return addressProcessor.HandleAdd(
+		&user.Addresses,
+		value,
+		user.ID,
+		func(a model.Address) string {
+			return a.StreetAddress + "," + a.Locality + "," + a.Region + "," + a.PostalCode + "," + a.Country
+		},
+	)
 }
 
 // handleReplaceAddresses 处理替换用户的 addresses
 func handleReplaceAddresses(data any, value any) error {
-	if value == nil {
-		return nil
-	}
-	addresses, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("addresses value must be an array")
-	}
 	user, ok := data.(*model.User)
 	if !ok {
 		return fmt.Errorf("data must be a User pointer")
 	}
-	user.Addresses = make([]model.Address, 0, len(addresses))
-	// 检查重复的 address
-	existingAddresses := make(map[string]bool)
-	for _, address := range addresses {
-		parsedAddress, err := parseAddress(address, user.ID)
-		if err != nil {
-			return err
-		}
-		// 检查是否重复
-		key := strings.ToLower(parsedAddress.StreetAddress + "," + parsedAddress.Locality + "," + parsedAddress.Region + "," + parsedAddress.PostalCode + "," + parsedAddress.Country)
-		if existingAddresses[key] {
-			return fmt.Errorf("duplicate address in request")
-		}
-		user.Addresses = append(user.Addresses, parsedAddress)
-		existingAddresses[key] = true
-	}
-	return nil
+	return addressProcessor.HandleReplace(
+		&user.Addresses,
+		value,
+		user.ID,
+		func(a model.Address) string {
+			return a.StreetAddress + "," + a.Locality + "," + a.Region + "," + a.PostalCode + "," + a.Country
+		},
+	)
 }
 
 // handleRemoveEmails 处理从用户中移除 emails
