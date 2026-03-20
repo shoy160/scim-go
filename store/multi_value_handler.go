@@ -305,13 +305,21 @@ func NewGenericMultiValueProcessor[T any](handler MultiValueAttributeHandler[T])
 }
 
 // HandleAdd 处理添加操作
+// value 可以是数组（添加多个项）或对象（添加单个项）
 func (p *GenericMultiValueProcessor[T]) HandleAdd(items *[]T, value any, userID string, getExistingKey func(T) string) error {
 	if value == nil {
 		return nil
 	}
-	newItems, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("value must be an array")
+
+	var newItems []any
+	switch v := value.(type) {
+	case []any:
+		newItems = v
+	case map[string]interface{}:
+		// 单个对象，转换为数组
+		newItems = []any{v}
+	default:
+		return fmt.Errorf("value must be an array or object")
 	}
 
 	existingKeys := make(map[string]bool)
@@ -340,13 +348,21 @@ func (p *GenericMultiValueProcessor[T]) HandleAdd(items *[]T, value any, userID 
 }
 
 // HandleReplace 处理替换操作
+// value 可以是数组（替换为多个项）或对象（替换为单个项）
 func (p *GenericMultiValueProcessor[T]) HandleReplace(items *[]T, value any, userID string, getExistingKey func(T) string) error {
 	if value == nil {
 		return nil
 	}
-	newItems, ok := value.([]any)
-	if !ok {
-		return fmt.Errorf("value must be an array")
+
+	var newItems []any
+	switch v := value.(type) {
+	case []any:
+		newItems = v
+	case map[string]interface{}:
+		// 单个对象，转换为数组
+		newItems = []any{v}
+	default:
+		return fmt.Errorf("value must be an array or object")
 	}
 
 	*items = make([]T, 0, len(newItems))

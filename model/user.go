@@ -64,6 +64,13 @@ type User struct {
 	Password    string     `json:"password,omitempty" gorm:"type:varchar(255);-"` // 密码，非必填，默认不返回
 	Meta        Meta       `json:"meta,omitempty" gorm:"-"`                       // ResourceType由Meta.ResourceType动态生成，不持久化
 
+	// SCIM 2.0 标准属性 - 新增
+	PreferredLanguage string `json:"preferredLanguage,omitempty" gorm:"type:varchar(64);column:preferred_language"`
+	Locale            string `json:"locale,omitempty" gorm:"type:varchar(64)"`
+	Timezone          string `json:"timezone,omitempty" gorm:"type:varchar(64)"`
+	Title             string `json:"title,omitempty" gorm:"type:varchar(128)"`
+	UserType          string `json:"userType,omitempty" gorm:"type:varchar(64);column:user_type"`
+
 	// SCIM Meta 数据字段（数据库存储）
 	// ResourceType 不持久化，由API层根据资源类型动态生成
 	CreatedAt time.Time `json:"-" gorm:"column:created_at;autoCreateTime"`
@@ -89,6 +96,16 @@ type User struct {
 	Addresses []Address `json:"addresses,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
 	// 角色（SCIM标准）
 	Roles []Role `json:"roles,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	// 即时通讯（多值属性，关联表）
+	Ims []Im `json:"ims,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	// 照片（多值属性，关联表）
+	Photos []Photo `json:"photos,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	// URL（多值属性，关联表）
+	Urls []Url `json:"urls,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	// 权限（多值属性，关联表）
+	Entitlements []Entitlement `json:"entitlements,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	// X509证书（多值属性，关联表）
+	X509Certificates []X509Certificate `json:"x509Certificates,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
 	// 用户所属的组（非数据库字段，动态填充）
 	Groups []UserGroup `json:"groups,omitempty" gorm:"-"`
 }
@@ -152,9 +169,68 @@ type Role struct {
 	Primary   bool      `json:"primary,omitempty" gorm:"default:true"`
 }
 
+// Im 即时通讯账号（SCIM标准）
+type Im struct {
+	ID        uint      `json:"-" gorm:"primaryKey"`
+	CreatedAt time.Time `json:"-"`
+	UpdatedAt time.Time `json:"-"`
+	UserID    string    `json:"-" gorm:"column:user_id;type:varchar(64);index"`
+	Value     string    `json:"value" gorm:"type:varchar(128);not null"`
+	Type      string    `json:"type,omitempty" gorm:"type:varchar(32)"` // aim/gtalk/icq/xmpp/msn/skype/qq/other
+	Primary   bool      `json:"primary,omitempty" gorm:"default:true"`
+}
+
+// Photo 用户照片（SCIM标准）
+type Photo struct {
+	ID        uint      `json:"-" gorm:"primaryKey"`
+	CreatedAt time.Time `json:"-"`
+	UpdatedAt time.Time `json:"-"`
+	UserID    string    `json:"-" gorm:"column:user_id;type:varchar(64);index"`
+	Value     string    `json:"value" gorm:"type:varchar(255);not null"` // 照片URL
+	Type      string    `json:"type,omitempty" gorm:"type:varchar(32)"`  // photo/thumbnail
+	Primary   bool      `json:"primary,omitempty" gorm:"default:true"`
+}
+
+// Url 用户URL（SCIM标准）
+type Url struct {
+	ID        uint      `json:"-" gorm:"primaryKey"`
+	CreatedAt time.Time `json:"-"`
+	UpdatedAt time.Time `json:"-"`
+	UserID    string    `json:"-" gorm:"column:user_id;type:varchar(64);index"`
+	Value     string    `json:"value" gorm:"type:varchar(255);not null"`
+	Type      string    `json:"type,omitempty" gorm:"type:varchar(32)"` // work/home/other
+	Primary   bool      `json:"primary,omitempty" gorm:"default:true"`
+}
+
+// Entitlement 用户权限（SCIM标准）
+type Entitlement struct {
+	ID        uint      `json:"-" gorm:"primaryKey"`
+	CreatedAt time.Time `json:"-"`
+	UpdatedAt time.Time `json:"-"`
+	UserID    string    `json:"-" gorm:"column:user_id;type:varchar(64);index"`
+	Value     string    `json:"value" gorm:"type:varchar(128);not null"`
+	Type      string    `json:"type,omitempty" gorm:"type:varchar(32)"`
+	Primary   bool      `json:"primary,omitempty" gorm:"default:true"`
+}
+
+// X509Certificate X.509证书（SCIM标准）
+type X509Certificate struct {
+	ID        uint      `json:"-" gorm:"primaryKey"`
+	CreatedAt time.Time `json:"-"`
+	UpdatedAt time.Time `json:"-"`
+	UserID    string    `json:"-" gorm:"column:user_id;type:varchar(64);index"`
+	Value     string    `json:"value" gorm:"type:text;not null"` // Base64编码的证书
+	Primary   bool      `json:"primary,omitempty" gorm:"default:true"`
+}
+
 // TableName 表名映射
-func (u *User) TableName() string        { return "scim_users" }
-func (e *Email) TableName() string       { return "scim_user_emails" }
-func (p *PhoneNumber) TableName() string { return "scim_user_phone_numbers" }
-func (a *Address) TableName() string     { return "scim_user_addresses" }
-func (r *Role) TableName() string        { return "scim_user_roles" }
+func (u *User) TableName() string            { return "scim_users" }
+func (e *Email) TableName() string           { return "scim_user_emails" }
+func (p *PhoneNumber) TableName() string     { return "scim_user_phone_numbers" }
+func (a *Address) TableName() string         { return "scim_user_addresses" }
+func (r *Role) TableName() string            { return "scim_user_roles" }
+func (i *Im) TableName() string              { return "scim_user_ims" }
+func (p *Photo) TableName() string           { return "scim_user_photos" }
+func (u *Url) TableName() string             { return "scim_user_urls" }
+func (e *Entitlement) TableName() string     { return "scim_user_entitlements" }
+func (x *X509Certificate) TableName() string { return "scim_user_x509_certificates" }

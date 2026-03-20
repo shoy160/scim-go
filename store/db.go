@@ -1198,7 +1198,8 @@ func (d *DBStore) RemoveMemberFromGroup(groupID, memberID string, memberType ...
 	}
 
 	if result.RowsAffected == 0 {
-		return model.ErrMemberNotInGroup
+		return nil
+		// return model.ErrMemberNotInGroup
 	}
 
 	// 清除相关缓存

@@ -599,7 +599,8 @@ func (m *MemoryStore) RemoveMemberFromGroup(groupID, memberID string, memberType
 	}
 
 	if !found {
-		return model.ErrMemberNotInGroup
+		return nil
+		// return model.ErrMemberNotInGroup
 	}
 
 	group.Members = newMembers

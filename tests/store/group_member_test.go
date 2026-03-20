@@ -156,11 +156,8 @@ func TestMemoryStore_RemoveMemberFromGroup(t *testing.T) {
 	// 测试移除不存在的用户
 	t.Run("Remove non-existent user from group", func(t *testing.T) {
 		err := store.RemoveMemberFromGroup("group-1", "nonexistent")
-		if err == nil {
-			t.Error("Should return error for non-existent user")
-		}
-		if err != model.ErrMemberNotInGroup {
-			t.Errorf("Expected ErrMemberNotInGroup, got %v", err)
+		if err != nil {
+			t.Error("Should not return error for non-existent user")
 		}
 	})
 

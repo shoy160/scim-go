@@ -99,7 +99,9 @@ func PatchResource(s Store, id string, data any, ops []model.PatchOperation) err
 			return fmt.Errorf("invalid patch operation: %w", err)
 		}
 
-		switch op.Op {
+		// 统一转换为小写进行比较
+		opLower := strings.ToLower(op.Op)
+		switch opLower {
 		case "add", "replace":
 			if err := handleAddOrReplace(s, id, data, op, isGroup, isUser); err != nil {
 				return err
@@ -117,6 +119,9 @@ func PatchResource(s Store, id string, data any, ops []model.PatchOperation) err
 
 // handleAddOrReplace 处理 add 和 replace 操作
 func handleAddOrReplace(s Store, id string, data any, op model.PatchOperation, isGroup, isUser bool) error {
+	// 统一转换为小写
+	opType := strings.ToLower(op.Op)
+
 	// 检查路径是否包含过滤条件
 	if strings.Contains(op.Path, "[") && strings.Contains(op.Path, "]") {
 		return handlePathWithFilter(data, op)
@@ -132,28 +137,28 @@ func handleAddOrReplace(s Store, id string, data any, op model.PatchOperation, i
 	}
 	// emails 字段的处理（User 类型）
 	if op.Path == "emails" && isUser {
-		if op.Op == "add" {
+		if opType == "add" {
 			return handleAddEmails(data, op.Value)
 		}
 		return handleReplaceEmails(data, op.Value)
 	}
 	// phoneNumbers 字段的处理（User 类型）
 	if op.Path == "phoneNumbers" && isUser {
-		if op.Op == "add" {
+		if opType == "add" {
 			return handleAddPhoneNumbers(data, op.Value)
 		}
 		return handleReplacePhoneNumbers(data, op.Value)
 	}
 	// addresses 字段的处理（User 类型）
 	if op.Path == "addresses" && isUser {
-		if op.Op == "add" {
+		if opType == "add" {
 			return handleAddAddresses(data, op.Value)
 		}
 		return handleReplaceAddresses(data, op.Value)
 	}
 	// roles 字段的处理（User 类型）
 	if op.Path == "roles" && isUser {
-		if op.Op == "add" {
+		if opType == "add" {
 			return handleAddRoles(data, op.Value)
 		}
 		return handleReplaceRoles(data, op.Value)
@@ -232,11 +237,28 @@ func handlePhoneNumbersWithFilter(user *model.User, parsedPath *util.ParsedPath,
 		return fmt.Errorf("failed to find matching phone numbers: %w", err)
 	}
 
-	// 对于 Add 操作，
-	if op.Op == "add" {
-		// Add 操作: 如果找不到匹配项，添加新项
+	// 对于 Add 操作
+	if strings.ToLower(op.Op) == "add" {
+		// 如果没有匹配项
 		if len(indices) == 0 {
-			// 解析 value 并添加新项
+			// 如果有子路径，创建新对象并设置过滤条件中的属性值
+			if parsedPath.SubPath != "" {
+				newItem := make(map[string]interface{})
+				// 从过滤条件中提取属性名和值
+				if parsedPath.Filter != nil {
+					newItem[parsedPath.Filter.AttributeName] = parsedPath.Filter.Value
+				}
+				// 设置子路径对应的属性值
+				newItem[parsedPath.SubPath] = op.Value
+				// 解析并添加新项
+				newPhone, err := phoneHandler.Parse(newItem, user.ID)
+				if err != nil {
+					return err
+				}
+				user.PhoneNumbers = append(user.PhoneNumbers, newPhone)
+				return nil
+			}
+			// 没有子路径，直接解析 value 并添加新项
 			valueMap, ok := op.Value.(map[string]interface{})
 			if !ok {
 				return fmt.Errorf("value must be a map for add operation")
@@ -248,7 +270,7 @@ func handlePhoneNumbersWithFilter(user *model.User, parsedPath *util.ParsedPath,
 			user.PhoneNumbers = append(user.PhoneNumbers, newPhone)
 			return nil
 		}
-		// 如果找到匹配项，更新匹配项
+		// 如果找到匹配项，继续执行更新操作
 	} else {
 		// Replace 操作: 如果找不到匹配项，返回错误
 		if len(indices) == 0 {
@@ -258,15 +280,10 @@ func handlePhoneNumbersWithFilter(user *model.User, parsedPath *util.ParsedPath,
 
 	// 如果有子路径，更新匹配项的子属性
 	if parsedPath.SubPath != "" {
-		valueMap, ok := op.Value.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("value must be a map for sub-path update")
-		}
-
+		// 根据SCIM 2.0规范，当路径包含子路径时，value是子属性的值
+		// 例如：phoneNumbers[type eq "mobile"].value 的 value 应该是新的电话号码值
 		for _, idx := range indices {
-			if subValue, exists := valueMap[parsedPath.SubPath]; exists {
-				items[idx][parsedPath.SubPath] = subValue
-			}
+			items[idx][parsedPath.SubPath] = op.Value
 		}
 	} else {
 		// 更新整个匹配项
@@ -328,10 +345,27 @@ func handleAddressesWithFilter(user *model.User, parsedPath *util.ParsedPath, op
 	}
 
 	// 对于 Add 操作
-	if op.Op == "add" {
-		// Add 操作: 如果找不到匹配项,添加新项
+	if strings.ToLower(op.Op) == "add" {
+		// 如果没有匹配项
 		if len(indices) == 0 {
-			// 解析 value 并添加新项
+			// 如果有子路径，创建新对象并设置过滤条件中的属性值
+			if parsedPath.SubPath != "" {
+				newItem := make(map[string]interface{})
+				// 从过滤条件中提取属性名和值
+				if parsedPath.Filter != nil {
+					newItem[parsedPath.Filter.AttributeName] = parsedPath.Filter.Value
+				}
+				// 设置子路径对应的属性值
+				newItem[parsedPath.SubPath] = op.Value
+				// 解析并添加新项
+				newAddress, err := addressHandler.Parse(newItem, user.ID)
+				if err != nil {
+					return err
+				}
+				user.Addresses = append(user.Addresses, newAddress)
+				return nil
+			}
+			// 没有子路径，直接解析 value 并添加新项
 			valueMap, ok := op.Value.(map[string]interface{})
 			if !ok {
 				return fmt.Errorf("value must be a map for add operation")
@@ -343,7 +377,7 @@ func handleAddressesWithFilter(user *model.User, parsedPath *util.ParsedPath, op
 			user.Addresses = append(user.Addresses, newAddress)
 			return nil
 		}
-		// 如果找到匹配项,继续执行更新操作
+		// 如果找到匹配项，继续执行更新操作
 	} else {
 		// Replace 操作: 如果找不到匹配项,返回错误
 		if len(indices) == 0 {
@@ -353,15 +387,9 @@ func handleAddressesWithFilter(user *model.User, parsedPath *util.ParsedPath, op
 
 	// 如果有子路径,更新匹配项的子属性
 	if parsedPath.SubPath != "" {
-		valueMap, ok := op.Value.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("value must be a map for sub-path update")
-		}
-
+		// 根据SCIM 2.0规范，当路径包含子路径时，value是子属性的值
 		for _, idx := range indices {
-			if subValue, exists := valueMap[parsedPath.SubPath]; exists {
-				items[idx][parsedPath.SubPath] = subValue
-			}
+			items[idx][parsedPath.SubPath] = op.Value
 		}
 	} else {
 		// 更新整个匹配项
@@ -437,22 +465,39 @@ func handleEmailsWithFilter(user *model.User, parsedPath *util.ParsedPath, op mo
 	}
 
 	// 对于 Add 操作
-	if op.Op == "add" {
-		// Add 操作: 如果找不到匹配项,添加新项
+	if strings.ToLower(op.Op) == "add" {
+		// 如果没有匹配项
 		if len(indices) == 0 {
-			// 解析 value 并添加新项
+			// 如果有子路径，创建新对象并设置过滤条件中的属性值
+			if parsedPath.SubPath != "" {
+				newItem := make(map[string]interface{})
+				// 从过滤条件中提取属性名和值
+				if parsedPath.Filter != nil {
+					newItem[parsedPath.Filter.AttributeName] = parsedPath.Filter.Value
+				}
+				// 设置子路径对应的属性值
+				newItem[parsedPath.SubPath] = op.Value
+				// 解析并添加新项
+				newEmail, err := emailHandler.Parse(newItem, user.ID)
+				if err != nil {
+					return err
+				}
+				user.Emails = append(user.Emails, newEmail)
+				return nil
+			}
+			// 没有子路径，直接解析 value 并添加新项
 			valueMap, ok := op.Value.(map[string]interface{})
 			if !ok {
 				return fmt.Errorf("value must be a map for add operation")
 			}
-			newEmail, err := parseEmail(valueMap, user.ID)
+			newEmail, err := emailHandler.Parse(valueMap, user.ID)
 			if err != nil {
 				return err
 			}
 			user.Emails = append(user.Emails, newEmail)
 			return nil
 		}
-		// 如果找到匹配项,继续执行更新操作
+		// 如果找到匹配项，继续执行更新操作
 	} else {
 		// Replace 操作: 如果找不到匹配项,返回错误
 		if len(indices) == 0 {
@@ -462,15 +507,9 @@ func handleEmailsWithFilter(user *model.User, parsedPath *util.ParsedPath, op mo
 
 	// 如果有子路径,更新匹配项的子属性
 	if parsedPath.SubPath != "" {
-		valueMap, ok := op.Value.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("value must be a map for sub-path update")
-		}
-
+		// 根据SCIM 2.0规范，当路径包含子路径时，value是子属性的值
 		for _, idx := range indices {
-			if subValue, exists := valueMap[parsedPath.SubPath]; exists {
-				items[idx][parsedPath.SubPath] = subValue
-			}
+			items[idx][parsedPath.SubPath] = op.Value
 		}
 	} else {
 		// 更新整个匹配项
@@ -526,10 +565,27 @@ func handleRolesWithFilter(user *model.User, parsedPath *util.ParsedPath, op mod
 	}
 
 	// 对于 Add 操作
-	if op.Op == "add" {
-		// Add 操作: 如果找不到匹配项,添加新项
+	if strings.ToLower(op.Op) == "add" {
+		// 如果没有匹配项
 		if len(indices) == 0 {
-			// 解析 value 并添加新项
+			// 如果有子路径，创建新对象并设置过滤条件中的属性值
+			if parsedPath.SubPath != "" {
+				newItem := make(map[string]interface{})
+				// 从过滤条件中提取属性名和值
+				if parsedPath.Filter != nil {
+					newItem[parsedPath.Filter.AttributeName] = parsedPath.Filter.Value
+				}
+				// 设置子路径对应的属性值
+				newItem[parsedPath.SubPath] = op.Value
+				// 解析并添加新项
+				newRole, err := roleHandler.Parse(newItem, user.ID)
+				if err != nil {
+					return err
+				}
+				user.Roles = append(user.Roles, newRole)
+				return nil
+			}
+			// 没有子路径，直接解析 value 并添加新项
 			valueMap, ok := op.Value.(map[string]interface{})
 			if !ok {
 				return fmt.Errorf("value must be a map for add operation")
@@ -541,7 +597,7 @@ func handleRolesWithFilter(user *model.User, parsedPath *util.ParsedPath, op mod
 			user.Roles = append(user.Roles, newRole)
 			return nil
 		}
-		// 如果找到匹配项,继续执行更新操作
+		// 如果找到匹配项，继续执行更新操作
 	} else {
 		// Replace 操作: 如果找不到匹配项,返回错误
 		if len(indices) == 0 {
@@ -551,15 +607,9 @@ func handleRolesWithFilter(user *model.User, parsedPath *util.ParsedPath, op mod
 
 	// 如果有子路径,更新匹配项的子属性
 	if parsedPath.SubPath != "" {
-		valueMap, ok := op.Value.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("value must be a map for sub-path update")
-		}
-
+		// 根据SCIM 2.0规范，当路径包含子路径时，value是子属性的值
 		for _, idx := range indices {
-			if subValue, exists := valueMap[parsedPath.SubPath]; exists {
-				items[idx][parsedPath.SubPath] = subValue
-			}
+			items[idx][parsedPath.SubPath] = op.Value
 		}
 	} else {
 		// 更新整个匹配项
